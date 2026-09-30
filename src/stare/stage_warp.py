@@ -1,10 +1,10 @@
-"""reg_qc=2 stage warper for the tiled ('DRAPE') registration method.
+"""reg_qc=2 stage warper for the tiled ('STARE') registration method.
 
 The reg_qc=2 scorer (``bin/warp_seg_qc.py``) is method-agnostic: it scores every stage through an
 injected ``warp(slide_name, xy, stage) -> xy`` callable and never imports the registrar itself.
 For VALIS that callable comes from ``valis_stage_warp.make_warper`` (a loaded registrar pickle +
 BioFormats JVM). This module is its tiled-method counterpart: it builds the *same* callable from a
-lightweight DRAPE transform manifest — a global rigid ``M0`` per slide plus a control-grid mesh
+lightweight STARE transform manifest — a global rigid ``M0`` per slide plus a control-grid mesh
 field — with **no VALIS, no JVM, pure NumPy**.
 
 Manifest shape::
@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from drape.mesh_field import MeshField
+from stare.mesh_field import MeshField
 
 __all__ = [
     "STAGE_NATIVE",
@@ -71,7 +71,7 @@ def _mesh_from_spec(spec):
 
 
 def make_warper(manifest):
-    """Build ``warp(slide_name, xy, stage) -> xy`` over a DRAPE transform manifest."""
+    """Build ``warp(slide_name, xy, stage) -> xy`` over a STARE transform manifest."""
     slides = manifest["slides"]
     affines = {name: np.asarray(s["M0"], dtype=float) for name, s in slides.items()}
     meshes = {name: _mesh_from_spec(s.get("mesh")) for name, s in slides.items()}

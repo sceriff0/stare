@@ -1,11 +1,11 @@
-"""Assemble and serialize the DRAPE transform manifest.
+"""Assemble and serialize the STARE transform manifest.
 
 A manifest is the whole transform for a patient: a global affine ``M0`` per slide plus, for slides
 that needed refining, a control-grid mesh field. It is JSON-native and is consumed unchanged by
 :func:`tiled_stage_warp.make_warper` (reg_qc=2) and by the image warp — one artifact, three
 readers.
 
-The mesh itself comes from SOLVE (``drape.solve.solve_dctpls``); :func:`slide_entry` wraps it
+The mesh itself comes from SOLVE (``stare.solve.solve_dctpls``); :func:`slide_entry` wraps it
 with the slide's ``M0``. A slide whose solved field is identically zero gets no mesh at all
 (rigid-only entry).
 """

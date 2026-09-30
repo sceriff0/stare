@@ -1,6 +1,6 @@
 """Smooth control-grid displacement field + a non-negative bilinear resampler.
 
-These are the geometry primitives of the tiled ('DRAPE') registration method. The tiled
+These are the geometry primitives of the tiled ('STARE') registration method. The tiled
 registrar measures, per tile, one residual displacement at the tile centre; those control
 points form a regular grid, and :class:`MeshField` interpolates them into a *single continuous*
 displacement field over the whole slide. Warping points or images through one continuous field

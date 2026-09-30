@@ -1,9 +1,9 @@
-"""Logging for the DRAPE stages: one root configuration, per-module loggers.
+"""Logging for the STARE stages: one root configuration, per-module loggers.
 
 A copy of the two functions the stages use from the mirage pipeline's
 ``bin/utils/logger.py`` (``configure_logging``, ``get_logger``), so the package
 imports nothing from the pipeline. The copy is kept identical to the original by
-``tests/test_drape_package_copies_do_not_drift.py`` on the mirage side, which
+``tests/test_stare_package_copies_do_not_drift.py`` on the mirage side, which
 compares the two definitions' ASTs (docstrings aside) -- edit both or neither.
 """
 
@@ -30,7 +30,7 @@ def configure_logging(
     """Configure the root logger once: console (stdout) and an optional file.
 
     A second call is a no-op, so a stage's ``main`` can call it unconditionally
-    whether it runs as its own process or inside ``drape register``.
+    whether it runs as its own process or inside ``stare register``.
     """
     global _LOGGING_CONFIGURED, _LOG_LEVEL, _LOG_FILE
 

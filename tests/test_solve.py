@@ -1,4 +1,4 @@
-"""drape.solve: the SOLVE contract around ``solve_dctpls``.
+"""stare.solve: the SOLVE contract around ``solve_dctpls``.
 
 STARE v2 has one solver on one input shape -- REG_TILE's window vectors on the slide-global
 lattice. These tests pin the edges of that contract: a pre-v2 control JSON (one point per tile,
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from drape import solve
+from stare import solve
 
 S = 128
 

@@ -1,4 +1,4 @@
-"""drape.solve's ``dctpls`` core: robust affine + robust DCT-PLS, no dead zone.
+"""stare.solve's ``dctpls`` core: robust affine + robust DCT-PLS, no dead zone.
 
 Why it exists (research/stare-optimal-design-2026-09-27.md §0, §3): STARE v1's ``robust``
 solver's TRE gate hard-zeroed sub-gate vectors, its first-order Tikhonov penalty shrank the
@@ -16,9 +16,9 @@ import json
 
 import numpy as np
 import pytest
-from drape import solve
-from drape.manifest import slide_entry
-from drape.mesh_field import MeshField
+from stare import solve
+from stare.manifest import slide_entry
+from stare.mesh_field import MeshField
 
 TILE = 1024.0
 
@@ -326,7 +326,7 @@ def test_on_a_coarse_4x4_grid_dctpls_ties_raw_vectors():
     assert e_dct <= 1.01 * e_raw, (e_dct, e_raw)
 
 
-# ── Phase 5b audit fixes (research/drape-step-support-2026-09-27.md, SOLVE S1-S6) ────
+# ── Phase 5b audit fixes (research/stare-step-support-2026-09-27.md, SOLVE S1-S6) ────
 def test_the_robust_scale_of_residual_norms_is_the_rayleigh_one():
     """|r| of an isotropic Gaussian residual is Rayleigh: median(|r|) / 1.1774 is sigma."""
     rng = np.random.default_rng(0)

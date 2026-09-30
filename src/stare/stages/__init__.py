@@ -1,4 +1,4 @@
-"""The four DRAPE stages, one module each, each exposing ``main(argv) -> int``.
+"""The four STARE stages, one module each, each exposing ``main(argv) -> int``.
 
 Importing this package sets the cache-directory environment the stages ran with
 as pipeline scripts, BEFORE any of them imports numpy/scikit-image: a cluster

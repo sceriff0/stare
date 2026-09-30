@@ -1,4 +1,4 @@
-"""Global rigid anchor (M0) estimation for the DRAPE registration method.
+"""Global rigid anchor (M0) estimation for the STARE registration method.
 
 The COARSE step aligns a whole moving slide to the reference with one rigid ``M0``, on a pair of
 nuclear-channel thumbnails that share one decimation factor. Its only job is to be ROBUST: the
@@ -64,7 +64,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from drape.log import get_logger
+from stare.log import get_logger
 
 logger = get_logger(__name__)
 

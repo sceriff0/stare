@@ -1,4 +1,4 @@
-"""End-to-end DRAPE registration of one moving slide against the reference, in process.
+"""End-to-end STARE registration of one moving slide against the reference, in process.
 
 ``register_slide`` composes the method's pieces in the order the Nextflow DAG runs them, but
 in a single call so it is unit-testable and reusable by the ``bin/`` CLIs:
@@ -21,14 +21,14 @@ from __future__ import annotations
 
 import numpy as np
 
-from drape.coarse_align import estimate_rigid
-from drape.manifest import slide_entry
-from drape.mesh_field import MeshField
-from drape.solve import solve_dctpls
-from drape.tile_grid import tile_grid
-from drape.tile_residual import residual_displacement
-from drape.vector_grid import estimate_tile_vectors, read_box
-from drape.warp import warp_image
+from stare.coarse_align import estimate_rigid
+from stare.manifest import slide_entry
+from stare.mesh_field import MeshField
+from stare.solve import solve_dctpls
+from stare.tile_grid import tile_grid
+from stare.tile_residual import residual_displacement
+from stare.vector_grid import estimate_tile_vectors, read_box
+from stare.warp import warp_image
 
 __all__ = ["register_slide"]
 
@@ -112,7 +112,7 @@ def register_slide(
     )
     mesh = MeshField.from_spec(entry["mesh"])
 
-    # 4. Post-refinement per-tile residual = DRAPE's final-accuracy TRE (the analogue of VALIS's
+    # 4. Post-refinement per-tile residual = STARE's final-accuracy TRE (the analogue of VALIS's
     #    non-rigid error). Re-warp the DAPI with M0 + mesh and re-measure each tile against the
     #    reference with one whole-read-box correlation. With no mesh the rigid warp is final.
     tre_rigid = [c["tre"] for c in controls]

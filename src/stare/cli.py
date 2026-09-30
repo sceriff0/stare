@@ -1,13 +1,13 @@
-"""The ``drape`` command: the four stages as subcommands, plus ``register``.
+"""The ``stare`` command: the four stages as subcommands, plus ``register``.
 
-``drape coarse``, ``drape reg-tile``, ``drape solve`` and ``drape stitch`` pass
-their argv straight to the stage ``main`` functions in ``drape.stages`` -- the
+``stare coarse``, ``stare reg-tile``, ``stare solve`` and ``stare stitch`` pass
+their argv straight to the stage ``main`` functions in ``stare.stages`` -- the
 same functions the mirage pipeline's ``bin/tiled_*.py`` shims call, one Nextflow
-task each. ``drape register`` runs all four in one process: the coarse anchor,
+task each. ``stare register`` runs all four in one process: the coarse anchor,
 then the tile plan mapped over a local ``multiprocessing`` pool (``--workers``),
 then the solve, then the stitch. It writes the same ``*_manifest.json`` and
 ``*_registered.ome.tif`` the pipeline publishes, because it runs the same stage
-functions over the same tile rows; mirage's ``tests/test_drape_package_parity.py``
+functions over the same tile rows; mirage's ``tests/test_stare_package_parity.py``
 asserts the two paths agree to the byte.
 """
 
@@ -20,12 +20,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from drape import __version__
+from stare import __version__
 
 # The package's own default for the anchor thumbnail bound. The stage itself has
 # NO default (the pipeline resolves it from its preset tiers and passes it
-# explicitly); this is the value `drape register` uses when the caller does not
-# say, and it equals the pipeline's `high` DRAPE tier.
+# explicitly); this is the value `stare register` uses when the caller does not
+# say, and it equals the pipeline's `high` STARE tier.
 DEFAULT_MAX_DIM = 1024
 
 
@@ -40,7 +40,7 @@ def _slide_name(path) -> str:
 
 def _run_tile(argv) -> str:
     """Pool worker: one reg-tile stage over one plan row; returns the control JSON path."""
-    from drape.stages import reg_tile
+    from stare.stages import reg_tile
 
     rc = reg_tile.main(argv)
     if rc:
@@ -49,7 +49,7 @@ def _run_tile(argv) -> str:
 
 
 def register(a) -> int:
-    """``drape register``: coarse -> reg-tile x N (pool) -> solve -> stitch, one process.
+    """``stare register``: coarse -> reg-tile x N (pool) -> solve -> stitch, one process.
 
     Parameters
     ----------
@@ -61,14 +61,14 @@ def register(a) -> int:
     int
         0 on success; a stage's non-zero return code otherwise.
     """
-    from drape.stages import coarse, reg_tile, solve, stitch
+    from stare.stages import coarse, reg_tile, solve, stitch
 
     ref_name = a.reference_name or _slide_name(a.reference)
     mov_name = a.moving_name or _slide_name(a.moving)
 
     tmp = None
     if a.workdir is None:
-        tmp = tempfile.TemporaryDirectory(prefix="drape-")
+        tmp = tempfile.TemporaryDirectory(prefix="stare-")
         work = Path(tmp.name)
     else:
         work = Path(a.workdir)
@@ -182,13 +182,13 @@ def register(a) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The ``drape`` argument parser: four passthrough stages and ``register``."""
+    """The ``stare`` argument parser: four passthrough stages and ``register``."""
     ap = argparse.ArgumentParser(
-        prog="drape",
-        description="DRAPE: tile-parallel, JVM-free, non-rigid registration of "
+        prog="stare",
+        description="STARE: tile-parallel, JVM-free, non-rigid registration of "
         "whole-slide images.",
     )
-    ap.add_argument("--version", action="version", version=f"drape {__version__}")
+    ap.add_argument("--version", action="version", version=f"stare {__version__}")
     sub = ap.add_subparsers(dest="command", required=True)
 
     for name, help_ in (
@@ -232,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--stride",
         type=int,
         default=128,
-        help="vector-lattice stride (px); window = 2 x stride (drape.vector_grid)",
+        help="vector-lattice stride (px); window = 2 x stride (stare.vector_grid)",
     )
     # solve
     r.add_argument(
@@ -260,7 +260,7 @@ def main(argv=None) -> int:
         if stage_argv:
             ap.error(f"unrecognized arguments: {' '.join(stage_argv)}")
         return register(a)
-    from drape.stages import coarse, reg_tile, solve, stitch
+    from stare.stages import coarse, reg_tile, solve, stitch
 
     stage = {
         "coarse": coarse,

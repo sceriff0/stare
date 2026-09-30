@@ -1,4 +1,4 @@
-"""Small OME-TIFF I/O helpers shared by the tiled ('DRAPE') fan-out CLIs.
+"""Small OME-TIFF I/O helpers shared by the tiled ('STARE') fan-out CLIs.
 
 Keeps channel handling (promote 2-D to ``(C, H, W)``, pick the nuclear/fiducial channel, clamp to non-negative
 and restore the source dtype on write) in one place so tiled_coarse / tiled_reg_tile / tiled_stitch

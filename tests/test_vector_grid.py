@@ -1,4 +1,4 @@
-"""drape.vector_grid: REG_TILE's window-vector estimator.
+"""stare.vector_grid: REG_TILE's window-vector estimator.
 
 What each test pins (research/stare-optimal-design-2026-09-27.md §2 and
 research/stare-sota-review-2026-09-27.md Part C §3, §6):
@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from drape import vector_grid as vg
-from drape.tile_grid import tile_grid
-from drape.tile_residual import residual_displacement
-from drape_synthetic import make_pair, nuclei, true_control
+from stare import vector_grid as vg
+from stare.tile_grid import tile_grid
+from stare.tile_residual import residual_displacement
+from stare_synthetic import make_pair, nuclei, true_control
 
 
 def _uniform(ux, uy):

@@ -1,6 +1,6 @@
-"""drape.solve's ``dctpls`` on REG_TILE's window-vector lattice.
+"""stare.solve's ``dctpls`` on REG_TILE's window-vector lattice.
 
-When the controls carry ``vectors`` (drape.vector_grid), SOLVE lays every vector on the
+When the controls carry ``vectors`` (stare.vector_grid), SOLVE lays every vector on the
 slide-global lattice, applies no correlation-error gate (it drops good window vectors; REG_TILE
 already applied the peak-ratio floor), calibrates each vector's sigma from block-CV held-out
 residuals binned by peak ratio, and re-indexes the field to the frame the stitch evaluates it
@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from drape import solve
-from drape import vector_grid as vg
-from drape.mesh_field import MeshField
-from drape.tile_grid import tile_grid
-from drape_synthetic import make_pair, moving_point, tissue
+from stare import solve
+from stare import vector_grid as vg
+from stare.mesh_field import MeshField
+from stare.tile_grid import tile_grid
+from stare_synthetic import make_pair, moving_point, tissue
 
 S = 128
 

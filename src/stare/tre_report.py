@@ -1,4 +1,4 @@
-"""DRAPE's intrinsic TRE report — the method's own Target Registration Error, à la VALIS.
+"""STARE's intrinsic TRE report — the method's own Target Registration Error, à la VALIS.
 
 Built from the same features/correlations the registration itself uses, so it needs no external
 ground truth (exactly what makes VALIS's ``error_df`` intrinsic). Two entry points share this
@@ -9,7 +9,7 @@ builder so the ``_tre.json`` has one shape:
   * ``rigid_tre_px``      — percentiles of the per-tile rigid-stage misalignment, plus the full
                             per-tile ``tiles`` list = a *spatial* TRE heatmap VALIS does not give.
   * ``residual_after_px`` — (when measured) percentiles of the per-tile residual AFTER the mesh is
-                            applied: DRAPE's post-registration final-accuracy number, the analogue
+                            applied: STARE's post-registration final-accuracy number, the analogue
                             of VALIS's non-rigid error.
 
 Pure NumPy.
@@ -41,7 +41,7 @@ def build_tre_report(coarse_tre_px, n_inliers, tile_records, mesh_refined):
     if every record also has ``tre_after`` the post-refinement residual is summarised too.
 
     **The percentile summaries cover ACCEPTED records only.** A tile that put no valid,
-    in-range vector into the lattice (``drape.solve.tile_accepted``) contributed nothing to the
+    in-range vector into the lattice (``stare.solve.tile_accepted``) contributed nothing to the
     mesh, and its ``tre_rigid`` -- the median of no valid vector -- is not a measurement of a
     real misalignment. Averaging it in describes a registration that was never performed.
     ``tiles`` still carries every record, accepted or not, because *where* tiles were dropped

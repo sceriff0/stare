@@ -1,7 +1,7 @@
-# CI for the STANDALONE DRAPE repository (github.com/sceriff0/drape).
+# CI for the STANDALONE STARE repository (github.com/sceriff0/stare).
 # Inside mirage this file is inert: GitHub reads workflows only from the repository-root
-# .github/, and mirage's own CI tests packages/drape through requirements/ci.txt. It lives here
-# so `git subtree split -P packages/drape` carries it into the standalone repository unchanged.
+# .github/, and mirage's own CI tests packages/stare through requirements/ci.txt. It lives here
+# so `git subtree split -P packages/stare` carries it into the standalone repository unchanged.
 name: CI
 
 on:

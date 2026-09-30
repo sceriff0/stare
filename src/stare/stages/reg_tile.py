@@ -1,8 +1,8 @@
-"""DRAPE stage 2/4 (``drape reg-tile``): one tile's residual (the embarrassingly-parallel part).
+"""STARE stage 2/4 (``stare reg-tile``): one tile's residual (the embarrassingly-parallel part).
 
 Given the global M0 and a tile's core, rigid-warps the reference-frame read box of the moving
 DAPI (core + 3 x stride, see ``vector_grid.read_box``) and measures a GRID of window vectors on
-the slide-global lattice (``drape.vector_grid``: two passes, foreground-masked, one vector per
+the slide-global lattice (``stare.vector_grid``: two passes, foreground-masked, one vector per
 owned node with its peak ratio and sharpness). The control JSON keeps the one-point-per-tile
 keys (their values are the median of the tile's valid vectors, for the per-tile TRE heatmap)
 and adds ``lattice`` and ``vectors``, which SOLVE consumes. One task per tile — this is the little-process fan-out, so unlike
@@ -17,7 +17,7 @@ Two ways to name the tile, producing the identical control JSON:
   ``--x0 --y0 --x1 --y1``), which is what the mirage pipeline's TILED_REG_TILE renders from one
   row of the tile plan; or
 * ``--plan tiles.csv --row N``, row ``N`` (0-based, header excluded) of the tile plan
-  ``drape coarse`` wrote -- for a SLURM array job or any engine that only has an integer index.
+  ``stare coarse`` wrote -- for a SLURM array job or any engine that only has an integer index.
 
 The mirage pipeline invokes this stage through ``bin/tiled_reg_tile.py``, a shim over ``main``.
 """
@@ -31,11 +31,11 @@ from pathlib import Path
 
 import numpy as np
 
-from drape.log import configure_logging, get_logger
-from drape.slide_io import open_lazy
-from drape.tile_residual import foreground_fraction
-from drape.vector_grid import estimate_tile_vectors, read_box
-from drape.warp import source_region, warp_image
+from stare.log import configure_logging, get_logger
+from stare.slide_io import open_lazy
+from stare.tile_residual import foreground_fraction
+from stare.vector_grid import estimate_tile_vectors, read_box
+from stare.warp import source_region, warp_image
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,7 @@ CORE_FIELDS = ("x0", "y0", "x1", "y1")
 
 
 def plan_rows(plan_path):
-    """The tile plan ``drape coarse`` wrote, as a list of dicts in file order.
+    """The tile plan ``stare coarse`` wrote, as a list of dicts in file order.
 
     Returns
     -------
@@ -146,7 +146,7 @@ def main(argv=None) -> int:
         0 on success.
     """
     configure_logging()
-    ap = argparse.ArgumentParser(description="DRAPE per-tile residual.")
+    ap = argparse.ArgumentParser(description="STARE per-tile residual.")
     ap.add_argument("--reference", required=True)
     ap.add_argument("--moving", required=True)
     ap.add_argument("--m0", required=True, help="M0 JSON from tiled_coarse")
@@ -172,7 +172,7 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--plan",
         default=None,
-        help="tile-plan CSV written by `drape coarse`; with --row, replaces the explicit "
+        help="tile-plan CSV written by `stare coarse`; with --row, replaces the explicit "
         "--ix/--iy/--cx/--cy/--rx0/--ry0/--rx1/--ry1 geometry",
     )
     ap.add_argument(

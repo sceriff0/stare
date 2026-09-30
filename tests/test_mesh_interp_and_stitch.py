@@ -21,13 +21,13 @@ import json
 
 import numpy as np
 import pytest
-from drape import solve, warp
-from drape.manifest import build_manifest, slide_entry
-from drape.mesh_field import MeshField, resample_bilinear
-from drape.stage_warp import STAGE_REFINED, make_warper
-from drape.stages import stitch
-from drape.warp import _invert, new_inverse_stats, source_coords
 from scipy.ndimage import map_coordinates
+from stare import solve, warp
+from stare.manifest import build_manifest, slide_entry
+from stare.mesh_field import MeshField, resample_bilinear
+from stare.stage_warp import STAGE_REFINED, make_warper
+from stare.stages import stitch
+from stare.warp import _invert, new_inverse_stats, source_coords
 
 S = 128
 TH = np.radians(0.2)

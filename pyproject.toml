@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "drape-registration"
-version = "2.0.0"
-description = "DRAPE: Distributed Robust Alignment by Piecewise Estimation — tile-parallel, JVM-free, non-rigid registration of cyclic-IF whole-slide images (formerly STARE)"
+name = "stare-registration"
+version = "3.0.0"
+description = "STARE: Scalable Tile-parallel Alignment by Robust Estimation — tile-parallel, JVM-free, non-rigid registration of cyclic-IF whole-slide images"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Valerio Fassi" }, { name = "Yinxiu Zhan" }]
@@ -31,7 +31,7 @@ dependencies = [
 test = ["pytest>=7"]
 
 [project.scripts]
-drape = "drape.cli:main"
+stare = "stare.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

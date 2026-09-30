@@ -1,10 +1,10 @@
-"""The ``drape`` command: subcommands dispatch, argv passes through, the row form of
+"""The ``stare`` command: subcommands dispatch, argv passes through, the row form of
 ``reg-tile`` addresses the tile the explicit form does.
 
 Deliberately small. The COARSE anchor has its own tests (``test_coarse_anchor.py``), and the
-real coverage of the method -- the four-stage chain, the fan-out vs ``drape register``
+real coverage of the method -- the four-stage chain, the fan-out vs ``stare register``
 parity, the solver's contract -- lives in the mirage suite
-(``tests/test_tiled_fanout.py``, ``tests/test_drape_package_parity.py``) and in
+(``tests/test_tiled_fanout.py``, ``tests/test_stare_package_parity.py``) and in
 ``test_solve.py`` beside this file. What is pinned here is only the CLI's
 wiring, and the ``--plan/--row`` contract on a hand-written plan.
 """
@@ -17,12 +17,12 @@ import json
 import numpy as np
 import pytest
 import tifffile
-from drape import cli
-from drape.stages import reg_tile
+from stare import cli
+from stare.stages import reg_tile
 
 
 def test_stage_subcommands_pass_argv_through_to_the_stage(capsys):
-    """``drape solve --help`` is the SOLVE stage's help, not the top-level parser's."""
+    """``stare solve --help`` is the SOLVE stage's help, not the top-level parser's."""
     with pytest.raises(SystemExit) as e:
         cli.main(["solve", "--help"])
     assert e.value.code == 0
@@ -51,7 +51,7 @@ def test_register_rejects_a_stray_argument(capsys):
 
 
 def test_version_is_the_package_version(capsys):
-    from drape import __version__
+    from stare import __version__
 
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])

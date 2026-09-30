@@ -18,8 +18,8 @@ import sys
 
 import numpy as np
 import pytest
-from drape import coarse_align as ca
 from scipy.ndimage import affine_transform, gaussian_filter
+from stare import coarse_align as ca
 
 N = 512
 
@@ -208,7 +208,7 @@ def test_coarse_imports_no_learned_stack():
     """COARSE must run in the tiled image with no torch/kornia at all (and no OpenCV): not at
     import, and not on the call path either (the retired front-end imported torch lazily)."""
     code = (
-        "import sys, numpy as np, drape.stages.coarse, drape.coarse_align as ca\n"
+        "import sys, numpy as np, stare.stages.coarse, stare.coarse_align as ca\n"
         "rng = np.random.default_rng(0)\n"
         "ref = np.zeros((128, 128), np.float32)\n"
         "for _ in range(60):\n"

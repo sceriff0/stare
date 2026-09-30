@@ -1,4 +1,4 @@
-"""DRAPE stage 4/4 (``drape stitch``): stream the moving slide through the manifest into the registered slide.
+"""STARE stage 4/4 (``stare stitch``): stream the moving slide through the manifest into the registered slide.
 
 Gigapixel-safe: neither the whole moving slide nor the whole output is held in memory. For each
 output tile it reads only the moving pixels that tile draws from (``source_region`` + a lazy zarr
@@ -16,11 +16,11 @@ from pathlib import Path
 
 import numpy as np
 
-from drape.log import configure_logging, get_logger
-from drape.mesh_field import MeshField
-from drape.ome import ome_metadata, ome_tiff_writer, resolve_pixel_size
-from drape.slide_io import open_lazy
-from drape.warp import (
+from stare.log import configure_logging, get_logger
+from stare.mesh_field import MeshField
+from stare.ome import ome_metadata, ome_tiff_writer, resolve_pixel_size
+from stare.slide_io import open_lazy
+from stare.warp import (
     INVERSE_MAX_ITERATIONS,
     INVERSE_TOL_PX,
     new_inverse_stats,
@@ -31,7 +31,7 @@ from drape.warp import (
 logger = get_logger(__name__)
 
 # The inverse map is evaluated every FIELD_STEP output px and bilinearly upsampled
-# (drape.warp.source_coords). Evaluating the mesh at every pixel of every channel was 74 % of
+# (stare.warp.source_coords). Evaluating the mesh at every pixel of every channel was 74 % of
 # STITCH on a 4096^2, 3-channel slide with a stride-128 mesh. At 8 px, on SOLVE's own cubic
 # meshes of the 8192^2 synthetic slide (seeds 0/1, base and +100 px), the upsampled map is
 # within 0.0015 px of the exact one at 10k random pixels (the bilinear bound
@@ -75,7 +75,7 @@ def stream_tiles(
 ):
     """Yield tiled output in tifffile order (channel, row, col), warping one tile at a time.
 
-    ``stats`` (``drape.warp.new_inverse_stats``), when given, accumulates the inverse map's
+    ``stats`` (``stare.warp.new_inverse_stats``), when given, accumulates the inverse map's
     fixed-point convergence over every tile.
     """
     c_n, h, w = src.shape
@@ -112,7 +112,7 @@ def _ome_metadata(channel_names, n_channels, pixel_size):
     choice is not "header or no header" -- it is "populated or anonymous". Returns the axes plus
     whatever is known; a caller that passes no names still gets the physical size.
 
-    The dict itself is ``drape.ome.ome_metadata``'s; what stays here is the one decision that
+    The dict itself is ``stare.ome.ome_metadata``'s; what stays here is the one decision that
     is this file's own -- what to do when the caller's name list and the slide disagree
     about how many channels there are.
     """
@@ -140,7 +140,7 @@ def main(argv=None) -> int:
         0 on success.
     """
     configure_logging()
-    ap = argparse.ArgumentParser(description="DRAPE streaming stitch via the manifest.")
+    ap = argparse.ArgumentParser(description="STARE streaming stitch via the manifest.")
     ap.add_argument("--moving", required=True)
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--moving-name", default=None)
@@ -219,7 +219,7 @@ def main(argv=None) -> int:
                 tile=(a.out_tile, a.out_tile),
                 photometric="minisblack",
                 # The stitched slide used to be written with no scale of any kind, so
-                # everything downstream of the DRAPE path -- SPLIT_CHANNELS, and through
+                # everything downstream of the STARE path -- SPLIT_CHANNELS, and through
                 # it the published pyramid -- had nothing but params.pixel_size to go on
                 # and no way to notice a disagreement. The resolution tags fix that for a
                 # plain-TIFF reader; CENTIMETER means pixels-per-cm, i.e. 1e4 µm/cm over µm/px.

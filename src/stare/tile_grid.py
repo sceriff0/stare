@@ -1,4 +1,4 @@
-"""Tiling geometry for the DRAPE registration method.
+"""Tiling geometry for the STARE registration method.
 
 A slide is divided into **core** tiles that partition it exactly — every pixel belongs to one
 core, with no gaps or overlaps — so the stitch step can place each warped core back without

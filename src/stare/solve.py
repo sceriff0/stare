@@ -2,8 +2,8 @@
 
 Every comparable method (approximating TPS, elastix FFD, RegWSI's diffusive solve, PIV)
 turns sparse, noisy displacement measurements into a dense field by
-*reject -> regularise -> densify*. DRAPE does it with one solver, ``dctpls``, on the
-slide-global vector lattice REG_TILE measures (``drape.vector_grid``):
+*reject -> regularise -> densify*. STARE does it with one solver, ``dctpls``, on the
+slide-global vector lattice REG_TILE measures (``stare.vector_grid``):
 
 0. **the lattice** -- every tile's window vectors laid on one lattice (node ``k`` at
    ``origin + k * stride``). A vector is valid when it is finite and ``|d| < max_disp`` (the
@@ -124,7 +124,7 @@ def jacobian_report(grid_x, grid_y, disp, interp="bilinear"):
     (negative means a fold); ``L < 1`` guarantees ``det(I + J) >= (1 - L)^2 > 0``. A
     single-row or single-column grid has no gradient along that axis.
     """
-    from drape.mesh_field import MeshField
+    from stare.mesh_field import MeshField
 
     gx = np.asarray(grid_x, dtype=float)
     gy = np.asarray(grid_y, dtype=float)
@@ -233,7 +233,7 @@ ROBUST_ITERATIONS = 6
 # 0.43-0.55, which would have smoothed the bump away). On 48x48 lattices: iid -0.04, true
 # 0.10 -> 0.05, 0.58 -> 0.52, 0.77 -> 1.0.
 #
-# CV_BUFFER_RHO = 0.2: the linear 50 %-overlap model (research/drape-papers/oa/solve/NOTES.md
+# CV_BUFFER_RHO = 0.2: the linear 50 %-overlap model (research/stare-papers/oa/solve/NOTES.md
 # S4) predicts 0.5, far above it, while the
 # Hann-windowed vectors REG_TILE actually emits correlate at 0.01-0.07 against the truth,
 # far below it -- so the ring stays off on those slides, where it cost ~50 % field error.
@@ -926,7 +926,7 @@ def _reindex_to_moving_frame(grid_x, grid_y, D, interp="bilinear", info=None):
     ``info``, when a dict, receives ``reindex_residual_px`` (the final
     ``max |F(g) - D(g + F(g))|``) and ``reindex_iterations``.
     """
-    from drape.mesh_field import MeshField
+    from stare.mesh_field import MeshField
 
     ny, nx, _ = D.shape
     if ny < 2 and nx < 2:

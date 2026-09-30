@@ -1,4 +1,4 @@
-"""Per-tile refinement primitive for the DRAPE registration method.
+"""Per-tile refinement primitive for the STARE registration method.
 
 After the global M0 anchor, a tile's moving crop and the reference crop differ only by a small,
 near-translational residual. :func:`residual_displacement` recovers it sub-pixel with phase
@@ -101,7 +101,7 @@ def residual_displacement(ref_tile, mov_tile, upsample=10, whiten_sigma=3.0):
     indistinguishable from a small real residual by magnitude; its ``error`` (~1.0 against real
     tissue's ~0.04) gives it away. STARE v1's SOLVE gated one-point-per-tile control points on it;
     since STARE v2 this function is the whole-tile oracle (the post-refinement residual in
-    ``drape.pipeline`` and the reference ``drape.vector_grid``'s tests compare against), and the
+    ``stare.pipeline`` and the reference ``stare.vector_grid``'s tests compare against), and the
     pipeline's per-window vectors are validated by peak ratio instead.
 
     ``error`` is **NaN** where scikit-image cannot compute it at all — notably when either crop is

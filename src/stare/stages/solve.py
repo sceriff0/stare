@@ -1,4 +1,4 @@
-"""DRAPE stage 3/4 (``drape solve``): assemble the transform manifest from per-tile control points.
+"""STARE stage 3/4 (``stare solve``): assemble the transform manifest from per-tile control points.
 
 Gathers the control JSONs emitted by every tile task, lays their window vectors on the
 slide-global lattice, and writes the self-contained manifest (reference identity + the moving
@@ -6,7 +6,7 @@ slide's M0 + mesh) the warp and the reg_qc=2 scorer consume. One cheap per-slide
 kilobytes, no image data.
 
 The solve itself -- the range gate, robust affine, robust DCT-PLS, sigma calibration, the fold
-certificate -- lives in ``drape.solve`` (``solve_dctpls``, the only solver since STARE v2). Its
+certificate -- lives in ``stare.solve`` (``solve_dctpls``, the only solver since STARE v2). Its
 report goes into the ``*_tre.json`` under ``"solve"`` and its name into the moving slide's
 manifest entry as ``"solver"``. A control JSON without ``vectors`` (a pre-v2 REG_TILE) is
 refused with a message naming the tiles: re-run REG_TILE.
@@ -23,10 +23,10 @@ from pathlib import Path
 
 import numpy as np
 
-from drape.log import configure_logging, get_logger
-from drape.manifest import build_manifest, slide_entry
-from drape.solve import solve_dctpls, tile_accepted
-from drape.tre_report import build_tre_report
+from stare.log import configure_logging, get_logger
+from stare.manifest import build_manifest, slide_entry
+from stare.solve import solve_dctpls, tile_accepted
+from stare.tre_report import build_tre_report
 
 logger = get_logger(__name__)
 
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 def main(argv=None) -> int:
     """CLI entry point: fold the per-tile control points into one warp manifest.
 
-    Runs ``drape.solve.solve_dctpls`` and writes the manifest the stitch stage warps
+    Runs ``stare.solve.solve_dctpls`` and writes the manifest the stitch stage warps
     from, plus the TRE JSON the QC report renders.
 
     Returns
@@ -44,7 +44,7 @@ def main(argv=None) -> int:
     """
     configure_logging()
     ap = argparse.ArgumentParser(
-        description="DRAPE manifest assembly from control points."
+        description="STARE manifest assembly from control points."
     )
     ap.add_argument("--m0", required=True, help="M0 JSON from tiled_coarse")
     ap.add_argument(
@@ -110,7 +110,7 @@ def main(argv=None) -> int:
     # monolithic path and the reg_benchmark harness provide the final-accuracy number.
     if a.out_tre:
         # accepted = the tile put at least one in-range vector into the lattice
-        # (drape.solve.tile_accepted, the same range rule the solve applies). A record that says
+        # (stare.solve.tile_accepted, the same range rule the solve applies). A record that says
         # accepted=False is a tile the mesh took nothing from; the solve may still down-weight
         # more vectors, and says how many in the "solve" report below.
         records = [

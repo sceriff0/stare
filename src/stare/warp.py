@@ -1,4 +1,4 @@
-"""Image warp for the DRAPE registration method (the WARP_TILE core).
+"""Image warp for the STARE registration method (the WARP_TILE core).
 
 Warps a moving image into the reference frame through the *same* transform the reg_qc=2 stage
 warper uses — global affine ``M0`` plus the smooth mesh residual ``F`` — so the QC measures
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from drape.mesh_field import resample_bilinear
+from stare.mesh_field import resample_bilinear
 
 __all__ = [
     "INVERSE_MAX_ITERATIONS",
@@ -39,7 +39,7 @@ def _apply_affine(m, xy):
 # The error after k steps is <= L^k |F| (Banach; Behrmann et al. 2019 eq. 1), so a fixed 3
 # steps is only good for small L: SOLVE certifies L < 0.5 (FOLD_CERTIFICATE_LIPSCHITZ), and at
 # L = 0.5 with a 100 px field three steps leave up to 12.5 px (4.56 px measured,
-# research/drape-papers/oa/field/NOTES.md F2c). Real fields (L ~ 0.02) stop in 2-4 steps. The
+# research/stare-papers/oa/field/NOTES.md F2c). Real fields (L ~ 0.02) stop in 2-4 steps. The
 # step |v_k - v_(k-1)| bounds the returned point's fixed-point residual (by L times it) and its
 # error (by L / (1 - L) times it, <= the step itself for L <= 0.5), so it is what is recorded.
 # The cap only bounds the work on a field outside the certificate; hitting it is reported.

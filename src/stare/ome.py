@@ -1,10 +1,10 @@
 """The OME-TIFF header the stitch writes, and the pixel size it is stamped with.
 
-Exactly the functions ``drape.stages.stitch`` needs, copied from the mirage
+Exactly the functions ``stare.stages.stitch`` needs, copied from the mirage
 pipeline's ``bin/utils/ome_io.py`` (``ome_metadata``, ``ome_tiff_writer``) and
 ``bin/utils/pixel_size.py`` (``resolve_pixel_size`` and the readers behind it),
 so the package imports nothing from the pipeline. The copies are kept identical
-to the originals by ``tests/test_drape_package_copies_do_not_drift.py`` on the
+to the originals by ``tests/test_stare_package_copies_do_not_drift.py`` on the
 mirage side -- it compares each definition's AST (docstrings aside) and writes
 one array through both writers -- so edit both or neither.
 

@@ -1,4 +1,4 @@
-"""DRAPE stage 1/4 (``drape coarse``): global rigid anchor (M0) + tile plan.
+"""STARE stage 1/4 (``stare coarse``): global rigid anchor (M0) + tile plan.
 
 Estimates the whole-slide rigid ``M0`` (moving -> reference) from the DAPI channels and writes the
 tile grid the downstream per-tile registration fans out over. One cheap task per moving slide.
@@ -7,7 +7,7 @@ The estimate runs on a **thumbnail**, as docs/parallel_registration_design.md al
 Both slides are read lazily (zarr region reads, in row bands) and decimated by one shared integer
 factor, so peak memory is a band plus the thumbnail rather than the full-resolution plane.
 
-The anchor itself is ``drape.coarse_align.estimate_anchor``: a brute-force rotation sweep with
+The anchor itself is ``stare.coarse_align.estimate_anchor``: a brute-force rotation sweep with
 normalised cross-correlation at 256 px, refined at the ``--max-dim`` thumbnail, with an ORB
 fallback, and a loud REFUSAL when neither is trustworthy (see that module's docstring). It is
 FFT-based and its memory is a handful of thumbnail-sized canvases: measured peak RSS well under
@@ -22,9 +22,9 @@ full-res px, so keep ``factor`` small enough that it stays comfortably under ``h
 costs CPU (each of ~50 refine evaluations is a thumbnail warp + two FFTs), not meaningful memory.
 
 ``--max-dim`` is REQUIRED and has no default at the stage level. The mirage pipeline always passes
-it explicitly, resolved from ``RegPresets.DRAPE``; a default here would be a fourth, unpinned copy
+it explicitly, resolved from ``RegPresets.STARE``; a default here would be a fourth, unpinned copy
 of that tier value, and ``tests/test_reg_presets_inlined_in_config.py`` pins only the three
-Groovy/config copies. ``drape register`` (``drape.cli``) supplies the package's own default. It
+Groovy/config copies. ``stare register`` (``stare.cli``) supplies the package's own default. It
 also has a floor -- see the argument's own help.
 
 The mirage pipeline invokes this stage through ``bin/tiled_coarse.py``, a shim over ``main``.
@@ -41,14 +41,14 @@ from pathlib import Path
 
 import numpy as np
 
-from drape.coarse_align import (
+from stare.coarse_align import (
     CoarseRefused,
     estimate_anchor,
     scale_transform_to_full_res,
 )
-from drape.log import configure_logging, get_logger
-from drape.slide_io import band_rows_for, decimation_factor, open_lazy, read_decimated
-from drape.tile_grid import tile_grid
+from stare.log import configure_logging, get_logger
+from stare.slide_io import band_rows_for, decimation_factor, open_lazy, read_decimated
+from stare.tile_grid import tile_grid
 
 logger = get_logger(__name__)
 
@@ -86,12 +86,12 @@ def _finite_or_none(x):
 
 
 def main(argv=None) -> int:
-    """CLI entry point: estimate DRAPE's global anchor M0 and emit the tile plan.
+    """CLI entry point: estimate STARE's global anchor M0 and emit the tile plan.
 
     Reads the nuclear/fiducial channel of both slides at a thumbnail bounded by
     ``--max-dim``, estimates the rigid anchor (NCC rotation sweep, ORB fallback, or a
     refusal that fails the task), and writes the M0 JSON
-    plus the tile-plan CSV that ``drape reg-tile`` fans out over.
+    plus the tile-plan CSV that ``stare reg-tile`` fans out over.
 
     Returns
     -------
@@ -99,7 +99,7 @@ def main(argv=None) -> int:
         0 on success.
     """
     configure_logging()
-    ap = argparse.ArgumentParser(description="DRAPE coarse anchor + tile plan.")
+    ap = argparse.ArgumentParser(description="STARE coarse anchor + tile plan.")
     ap.add_argument("--reference", required=True)
     ap.add_argument("--moving", required=True)
     ap.add_argument(
@@ -119,7 +119,7 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--max-dim",
         type=int,
-        # REQUIRED, no default: the pipeline resolves this from RegPresets.DRAPE and always
+        # REQUIRED, no default: the pipeline resolves this from RegPresets.STARE and always
         # passes it. A default here would be a fourth copy of the tier value that nothing pins.
         required=True,
         help=(
