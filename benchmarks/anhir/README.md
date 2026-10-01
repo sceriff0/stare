@@ -95,7 +95,7 @@ the registered image, for visual QC.
 export STARE_REPO=$HOME/stare               # this repo, on the benchmarking branch
 export ANHIR_DATA=/path/to/anhir            # the layout above
 export ANHIR_WORK=$SCRATCH/anhir_work
-export STARE_SIF=$HOME/stare.sif            # optional: apptainer pull stare.sif docker://bolt3x/mirage-stare:1.0.0
+export STARE_SIF=$HOME/stare.sif            # optional: singularity pull stare.sif docker://bolt3x/mirage-stare:1.0.0
 benchmarks/anhir/slurm/submit.sh --prepare -- --partition=<cpu-partition>
 ```
 
