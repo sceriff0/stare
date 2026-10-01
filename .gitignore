@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+
+# ANHIR challenge data (~24 GB): never in git
+challenge/
