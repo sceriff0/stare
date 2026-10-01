@@ -1,12 +1,10 @@
-# CI for the STANDALONE STARE repository (github.com/sceriff0/stare).
-# Inside mirage this file is inert: GitHub reads workflows only from the repository-root
-# .github/, and mirage's own CI tests packages/stare through requirements/ci.txt. It lives here
-# so `git subtree split -P packages/stare` carries it into the standalone repository unchanged.
+# CI for STARE (github.com/sceriff0/stare), the method's only source since v1.0.0.
 name: CI
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 jobs:

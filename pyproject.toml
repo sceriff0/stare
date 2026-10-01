@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stare-registration"
-version = "3.0.0"
+version = "1.0.0"
 description = "STARE: Scalable Tile-parallel Alignment by Robust Estimation — tile-parallel, JVM-free, non-rigid registration of cyclic-IF whole-slide images"
 readme = "README.md"
 license = { text = "MIT" }

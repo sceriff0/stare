@@ -4,16 +4,15 @@
 JVM-free, non-rigid registration of whole-slide images, for cyclic immunofluorescence and
 any other same-section re-imaging where a nuclear channel is shared between rounds.
 
-**3.0.0: the name is STARE again.** Versions 2.x shipped this method as `drape-registration`
-(import `drape`, CLI `drape`); 3.0.0 is `stare-registration` (import `stare`, CLI `stare`)
-with the same code. There is no `drape` alias: replace `import drape` with `import stare`
-and `drape <stage>` with `stare <stage>`. The 0.1.x `stare-registration` was the earlier
-method (TRE gate, legacy/robust solvers), retired in 2.0.0. The mirage parameters keep
-their names (`registration_method='tiled'`, `reg_tiled_*`) and so do the `TILED_*` processes.
+**v1.0.0 is the first standalone release**, and this repository is the method's only
+source. [mirage](https://github.com/sceriff0/mirage) installs a pinned release from here
+(`registration_method='tiled'`, the `reg_tiled_*` parameters, the `TILED_*` processes).
+Earlier development versions lived inside mirage, as `stare-registration` 0.1.x (the
+retired TRE-gate method) and as `drape-registration` 2.x (this method under an interim
+name; replace `import drape` / `drape <stage>` with `import stare` / `stare <stage>`).
 
 ```bash
-pip install git+https://github.com/sceriff0/stare   # standalone repository
-pip install -e packages/stare                       # or from a mirage checkout
+pip install "stare-registration @ git+https://github.com/sceriff0/stare@v1.0.0"
 
 stare register --reference ref.ome.tif --moving mov.ome.tif \
     --out mov_registered.ome.tif --manifest mov_manifest.json --workers 8
@@ -26,14 +25,12 @@ The four stages are also individual subcommands (`stare coarse`, `stare reg-tile
 `stare solve`, `stare stitch`), so a workflow engine can fan the tile stage out across
 nodes. That is how the [mirage](https://github.com/sceriff0/mirage) Nextflow pipeline runs it.
 
-**Where development happens.** STARE is developed inside mirage as `packages/stare/`, which
-is the single source of truth:
-- mirage's `bin/tiled_*.py` scripts are shims over it;
-- `tests/test_stare_package_parity.py` in mirage asserts that the pipeline and
-  `stare register` produce the same manifest and the same pixels.
-
-The standalone repository [sceriff0/stare](https://github.com/sceriff0/stare) is generated
-from that directory with `git subtree split -P packages/stare`, so the two cannot diverge.
+**Where development happens.** Here: this repository is STARE's only source. mirage pins a
+release tag (its `containers/stare` image installs `stare-registration` from this repository
+at that tag), and mirage's `bin/tiled_*.py` scripts are thin shims over the installed package;
+its `tests/test_stare_package_parity.py` asserts that the pipeline's stage-by-stage run and
+`stare register` produce the same manifest and the same pixels. A change to STARE is a commit
+and a new tag here, then a pin bump in mirage.
 
 ## How it works, in brief
 
