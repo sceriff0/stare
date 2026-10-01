@@ -98,3 +98,22 @@ def test_run_records_failure_without_landmarks(tmp_path):
     assert rc == 1
     rec = json.loads((tmp_path / "o" / "runs" / "0" / "run.json").read_text())
     assert rec["ok"] is False and "landmark" in rec["error"]
+
+
+def test_score_drops_baseline_made_on_another_landmark_release(tmp_path, capsys):
+    root, out = tmp_path / "data", tmp_path / "out"
+    _cover(root, [(0, "training", "S", "R")])
+    lm = root / "landmarks" / "T_1" / "scale-25pc"
+    target = np.array([[100.0, 100.0], [200.0, 200.0], [300.0, 100.0]])
+    anhir.write_landmarks(lm / "R.csv", target)
+    anhir.write_landmarks(lm / "S.csv", target + 50.0)
+    b = root / "BmUnwarpJ" / "0"
+    anhir.write_landmarks(b / "source_landmarks.csv", np.array([[1.0, 2.0], [3.0, 4.0]]))  # old release
+    b.joinpath("warped_source_landmarks.txt").write_text("point\n2\n1 2\n3 4\n")
+    anhir.write_landmarks(out / "stare" / "0.csv", target)
+    assert anhir.main(["score", "--data-root", str(root), "--out", str(out)]) == 0
+    assert "dropping bunwarpj" in capsys.readouterr().out
+    with open(out / "tables" / "cases.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert {r["method"] for r in rows} == {"initial", "stare"}
+    assert {r["method"]: float(r["rank"]) for r in rows} == {"stare": 1.0, "initial": 2.0}

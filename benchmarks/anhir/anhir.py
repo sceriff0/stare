@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from scipy.stats import rankdata
 
 COVER = "dataset_medium.csv"
 STATUSES = ("training", "evaluation")
@@ -131,13 +132,15 @@ def read_imagej_points(path):
 
 
 def source_landmarks_path(case, data_root):
-    """The official archive if unpacked, else the copy the bUnwarpJ baseline folder carries."""
+    """The official archive's source landmarks.
+
+    Never the copy in ``BmUnwarpJ/<id>/source_landmarks.csv``: that is an older annotation
+    release (different counts and points), so warping it cannot be scored against the
+    archive's targets, which are paired by index.
+    """
     official = Path(data_root) / "landmarks" / case.source_landmarks
     if official.exists():
         return official, "landmarks"
-    fallback = Path(data_root) / "BmUnwarpJ" / str(case.case_id) / "source_landmarks.csv"
-    if fallback.exists():
-        return fallback, "BmUnwarpJ"
     raise FileNotFoundError(
         f"no source landmarks for case {case.case_id}: unpack the ANHIR landmark archive "
         f"to {Path(data_root) / 'landmarks'}"
@@ -316,15 +319,33 @@ def cmd_run(a):
 
 
 # ── score ─────────────────────────────────────────────────────────────────────
-def _method_points(method, case, a):
-    """Warped source landmarks for one (method, case), or None if the method produced none."""
+def _method_points(method, case, a, source):
+    """``(warped source landmarks, problem)`` for one (method, case).
+
+    ``warped`` is None when the method produced nothing usable; ``problem`` then says why.
+    Landmarks are paired by index, so a warped set is only usable if it was made from the
+    same source landmarks the archive holds.
+    """
     if method == "initial":
-        return read_landmarks(Path(a.data_root) / "landmarks" / case.source_landmarks)
+        return source, ""
     if method == "bunwarpj":
-        p = Path(a.data_root) / "BmUnwarpJ" / str(case.case_id) / "warped_source_landmarks.txt"
-        return read_imagej_points(p) if p.exists() else None
-    p = Path(a.out) / method / f"{case.case_id}.csv"
-    return read_landmarks(p) if p.exists() else None
+        d = Path(a.data_root) / "BmUnwarpJ" / str(case.case_id)
+        p, used = d / "warped_source_landmarks.txt", d / "source_landmarks.csv"
+        if not p.exists():
+            return None, "no output"
+        if used.exists():
+            u = read_landmarks(used)
+            if len(u) != len(source) or not np.allclose(u, source, atol=0.5):
+                return None, "baseline used another landmark release"
+        pts = read_imagej_points(p)
+    else:
+        p = Path(a.out) / method / f"{case.case_id}.csv"
+        if not p.exists():
+            return None, "no output"
+        pts = read_landmarks(p)
+    if len(pts) != len(source):
+        return None, f"{len(pts)} warped points for {len(source)} source landmarks"
+    return pts, ""
 
 
 def _time_min(method, case, a):
@@ -378,17 +399,32 @@ def cmd_score(a):
         source, target = read_landmarks(src_p), read_landmarks(tgt_p)
         per_case = []
         for m in methods:
-            pts = _method_points(m, c, a)
+            pts, problem = _method_points(m, c, a, source)
             imputed = pts is None
             stats = case_stats(source if imputed else pts, target, source, c.diagonal)
             per_case.append({"case_id": c.case_id, "tissue": c.tissue, "method": m, **stats,
-                             "time_min": _time_min(m, c, a), "imputed_initial": imputed})
-        order = np.argsort(np.argsort([r["rtre_median"] for r in per_case], kind="stable"))
-        for r, k in zip(per_case, order):
-            r["rank"] = int(k) + 1
+                             "time_min": _time_min(m, c, a), "imputed_initial": imputed,
+                             "problem": problem})
+        ranks = rankdata([r["rtre_median"] for r in per_case], method="average")
+        for r, k in zip(per_case, ranks):
+            r["rank"] = float(k)
         rows += per_case
     if not rows:
         raise SystemExit("no training case had both landmark files")
+
+    # A baseline with no usable case at all is not a competitor; say so instead of ranking
+    # 230 imputed rows. (bUnwarpJ's published output was made on an older landmark release.)
+    for m in [m for m in methods if m != "initial"]:
+        mine = [r for r in rows if r["method"] == m]
+        if all(r["imputed_initial"] for r in mine):
+            why = sorted({r["problem"] for r in mine})
+            print(f"note: dropping {m}: no usable case ({'; '.join(why)})")
+            rows = [r for r in rows if r["method"] != m]
+            methods.remove(m)
+    for case_id in {r["case_id"] for r in rows}:
+        per_case = [r for r in rows if r["case_id"] == case_id]
+        for r, k in zip(per_case, rankdata([r["rtre_median"] for r in per_case], method="average")):
+            r["rank"] = float(k)
 
     tables = Path(a.out) / "tables"
     tables.mkdir(parents=True, exist_ok=True)

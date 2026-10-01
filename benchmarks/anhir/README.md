@@ -26,9 +26,16 @@ with the target landmarks.
 | rank | each case's methods ranked by median rTRE (1 = best) |
 
 A failed registration still counts: it is scored at the initial pose (`imputed_initial`), as
-the challenge does. bUnwarpJ's published output covers only **84 of the 230** training cases.
-So the scorer also reports a **`common`** subset (cases every method registered); compare
-methods on that subset.
+the challenge does. The scorer also reports a **`common`** subset: the cases every method
+actually registered.
+
+**About the bUnwarpJ baseline.** Its published output covers 84 of the 230 training cases,
+and all 84 were made on an **older landmark release**: the `source_landmarks.csv` in each
+`BmUnwarpJ/<id>/` folder has a different count and different points from the current archive.
+Landmarks are paired by index, so those outputs cannot be scored against the current targets.
+The scorer checks every baseline case and drops the method, with a note, when no case is
+usable, which is the situation today. Each case's `problem` column records why a method had
+no usable output.
 
 Only the 230 **training** cases have public target landmarks. The 251 evaluation cases are
 scored by the challenge server, and none of their numbers come from this harness.
@@ -39,12 +46,13 @@ scored by the challenge server, and none of their numbers come from this harness
 dataset_medium.csv                     cover table (481 cases)
 dataset_medium.z01..z05, .zip          split image archive (12.8 GB)
 images/<set>/scale-25pc/*.jpg          after `anhir.py join`
-landmarks/<set>/scale-25pc/*.csv       the separate landmark download (needs a challenge login)
+landmarks/<set>/scale-*/*.csv          the separate landmark download (needs a challenge login)
 BmUnwarpJ/<case_id>/                   the bUnwarpJ baseline
 ```
 
-Until `landmarks/` exists, `run` takes source landmarks from `BmUnwarpJ/<id>/source_landmarks.csv`
-where that file exists. Without target landmarks, `score` cannot run.
+The landmark download is itself named `dataset_medium.zip`, the same name as the image
+archive's last part. Rename it (here: `landmarks.zip`) before putting it next to the images,
+then unzip it into `landmarks/`. `run` and `score` both need the archive's landmarks.
 
 ## Brightfield to STARE input
 
@@ -64,7 +72,7 @@ round, so ANHIR is out of domain for it, and its numbers here are a stress test.
 ```bash
 git switch benchmarking
 export PYTHONPATH=src
-D=../../pipelines/mirage/challenge/anhir        # or wherever the download lives
+D=challenge/anhir                              # gitignored; the data lives here
 python benchmarks/anhir/anhir.py join --data-root $D                     # once
 python benchmarks/anhir/anhir.py run  --data-root $D --work /tmp/anhir_work \
     --out results/anhir --case-id 197 --workers 8                         # one case
