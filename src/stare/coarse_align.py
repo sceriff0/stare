@@ -25,9 +25,14 @@ THE METHOD (research/stare-optimal-design-2026-09-27.md, section 1):
    keypoints, cross-checked matches, RANSAC Euclidean) and take it with >= :data:`ORB_MIN_INLIERS`
    inliers when it agrees with a sweep candidate within 1 deg (or the sweep had no candidate at
    all); a disagreeing fallback is scored by the same correlation and the better of the two wins.
-5. **Refuse loudly** (:class:`CoarseRefused`) when neither is acceptable. A wrong anchor does not
-   fail anything downstream -- the per-tile reads simply land in the wrong place and the slide
-   comes out mis-registered with exit 0 -- so an unverifiable anchor is an error, not a warning.
+5. **Neither acceptable: return the best candidate anyway, UNVERIFIED** (``Anchor.trusted`` is
+   False) with a loud warning carrying both scores. A wrong anchor does not fail anything
+   downstream -- the per-tile reads simply land in the wrong place and the slide comes out
+   mis-registered with exit 0 -- so the warning and the ``trusted`` flag are the ONLY signal:
+   check that slide's registration QC. The candidate is the sweep's, unless an (under-supported)
+   ORB fit agrees with a sweep candidate or scores a higher correlation. ``strict=True``
+   restores the refusal (:class:`CoarseRefused`), which is otherwise raised only when there is
+   no candidate at all (a blank plane: no positive correlation and no ORB fit).
 
 NumPy + SciPy + scikit-image only: no torch, no kornia, no OpenCV, no JVM. The tiled container
 already carries all three. Memory is a few FFT canvases of the thumbnail (well under 1 GB at the
@@ -60,7 +65,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -104,7 +109,7 @@ ORB_RESIDUAL_PX = 3.0
 
 
 class CoarseRefused(RuntimeError):
-    """Neither the rotation sweep nor the ORB fallback produced an anchor worth trusting."""
+    """No anchor: no candidate at all, or (``strict=True``) none that passes the gates."""
 
 
 @dataclass(frozen=True)
@@ -118,6 +123,7 @@ class Anchor:
     residual, and it is documented as such rather than reported as NaN (NaN would reach the TRE
     report's JSON as a non-standard literal).
     ``n_inliers``: RANSAC inliers for ``"orb"``; 0 for ``"ncc_sweep"`` (no correspondences).
+    ``trusted``: False when the anchor passed neither acceptance gate and is the best guess.
     """
 
     M: np.ndarray
@@ -127,6 +133,7 @@ class Anchor:
     peak_ncc: float
     peak_ratio: float
     angle_deg: float
+    trusted: bool = True
 
 
 def _model_class(model):
@@ -633,11 +640,13 @@ def _orb_fallback(ref, mov, model):
     )
 
 
-def estimate_anchor(ref, mov, model="euclidean"):
+def estimate_anchor(ref, mov, model="euclidean", strict=False):
     """Estimate ``M0`` mapping ``mov`` thumbnail coordinates onto ``ref``; see the module doc.
 
-    Returns an :class:`Anchor`. Raises :class:`CoarseRefused` when no candidate passes, with the
-    scores in the message; the caller adds the slide names.
+    Returns an :class:`Anchor`; one that passed neither gate comes back with ``trusted`` False
+    and a warning. Raises :class:`CoarseRefused`, with the scores in the message (the caller
+    adds the slide names), when there is no candidate at all, or under ``strict`` when none
+    passes.
     """
     if model != "euclidean":
         raise ValueError(
@@ -693,36 +702,54 @@ def estimate_anchor(ref, mov, model="euclidean"):
     )
     logger.warning(f"coarse: {why} -- trying the ORB fallback")
     m_orb, rms, n_in = _orb_fallback(ref, mov, model)
-    if m_orb is None or n_in < ORB_MIN_INLIERS:
-        raise CoarseRefused(
-            f"no trustworthy rigid anchor. {why}; ORB fallback: {n_in} RANSAC inliers "
-            f"(need >= {ORB_MIN_INLIERS}). Check --nuclear-index, that both slides show the "
-            "same tissue, and that the nuclear channel is not blank."
+    orb_ok = m_orb is not None and n_in >= ORB_MIN_INLIERS
+    why = f"{why}; ORB fallback: {n_in} RANSAC inliers (need >= {ORB_MIN_INLIERS})"
+    hint = (
+        "Check --nuclear-index, that both slides show the same tissue at the same pixel size, "
+        "and that the nuclear channel is not blank."
+    )
+    sweep_usable = bool(np.isfinite(peak) and peak > 0)
+    if not orb_ok and (strict or (m_orb is None and not sweep_usable)):
+        raise CoarseRefused(f"no trustworthy rigid anchor. {why}. {hint}")
+    if m_orb is None:
+        chosen = sweep
+    else:
+        a_orb = _m_angle(m_orb)
+        orb_peak, _t = rf.peak(m_orb)
+        orb = Anchor(
+            M=m_orb,
+            residual_px=float(rms),
+            n_inliers=int(n_in),
+            method="orb",
+            peak_ncc=float(orb_peak),
+            peak_ratio=float(ratio),
+            angle_deg=_wrap_deg(a_orb),
         )
-    a_orb = _m_angle(m_orb)
-    orb_peak, _t = rf.peak(m_orb)
-    orb = Anchor(
-        M=m_orb,
-        residual_px=float(rms),
-        n_inliers=int(n_in),
-        method="orb",
-        peak_ncc=float(orb_peak),
-        peak_ratio=float(ratio),
-        angle_deg=_wrap_deg(a_orb),
-    )
-    sweep_has_candidate = peak >= MIN_PEAK_NCC
-    agrees = any(_angle_dist(a_orb, r[1]) <= ORB_AGREE_DEG for r in refined)
-    logger.info(
-        f"coarse: ORB fallback {n_in} inliers, rms {rms:.2f}px, angle {a_orb:+.2f} deg, "
-        f"NCC at that angle {orb_peak:.3f}; agrees with a sweep candidate: {agrees}"
-    )
-    if not sweep_has_candidate or agrees or orb_peak >= peak:
-        return orb
+        agrees = any(_angle_dist(a_orb, r[1]) <= ORB_AGREE_DEG for r in refined)
+        logger.info(
+            f"coarse: ORB fallback {n_in} inliers, rms {rms:.2f}px, angle {a_orb:+.2f} deg, "
+            f"NCC at that angle {orb_peak:.3f}; agrees with a sweep candidate: {agrees}"
+        )
+        # A well-supported ORB fit also wins when the sweep found nothing; an under-supported
+        # one has to earn it on the common yardstick (agreement, or a higher correlation).
+        sweep_has_candidate = peak >= MIN_PEAK_NCC if orb_ok else sweep_usable
+        if not sweep_has_candidate or agrees or orb_peak >= peak:
+            chosen = orb
+        else:
+            logger.warning(
+                "coarse: the ORB fallback disagrees with the sweep and scores a lower NCC "
+                f"({orb_peak:.3f} < {peak:.3f}); keeping the sweep's anchor"
+            )
+            chosen = sweep
+    if orb_ok:
+        return chosen
     logger.warning(
-        "coarse: the ORB fallback disagrees with the sweep and scores a lower NCC "
-        f"({orb_peak:.3f} < {peak:.3f}); keeping the sweep's anchor"
+        f"coarse: UNVERIFIED ANCHOR -- no candidate passed the acceptance gates; continuing "
+        f"with the best guess ({chosen.method}, angle {chosen.angle_deg:+.2f} deg, NCC "
+        f"{chosen.peak_ncc:.3f}). {why}. A wrong anchor fails nothing downstream: this slide "
+        f"can come out MIS-REGISTERED with exit 0, so inspect its registration QC. {hint}"
     )
-    return sweep
+    return replace(chosen, trusted=False)
 
 
 def estimate_rigid(ref, mov, model="euclidean", **_ignored):

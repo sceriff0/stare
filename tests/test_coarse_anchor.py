@@ -1,4 +1,4 @@
-"""COARSE's rigid anchor: NCC rotation sweep, ORB fallback, loud refusal.
+"""COARSE's rigid anchor: NCC rotation sweep, ORB fallback, unverified best guess, refusal.
 
 The synthetic pairs are the scout's hard cases (research/stare-optimal-design-2026-09-27, the
 ``make2`` generator of its brute.py), ported from OpenCV to SciPy: a blobby tissue silhouette,
@@ -95,6 +95,7 @@ def test_the_sweep_recovers_hard_rigid_cases(keep, theta, tx, ty):
     assert trans <= 3.0, f"centre off by {trans:.2f} thumbnail px ({a})"
     assert a.method == "ncc_sweep", a
     assert a.peak_ncc >= ca.MIN_PEAK_NCC and a.peak_ratio >= ca.MIN_PEAK_RATIO
+    assert a.trusted
     assert a.n_inliers == 0  # the sweep has no correspondences, by contract
     assert 0 < a.residual_px < 5  # the quantisation bound, finite for the JSON
 
@@ -137,19 +138,38 @@ def test_estimate_rigid_is_the_three_tuple_view():
     assert np.isfinite(residual) and n_inliers == 0
 
 
-@pytest.mark.parametrize("kind", ["noise", "flat"])
-def test_a_pair_with_nothing_in_common_is_refused_loudly(kind):
+def _noise_pair():
     rng = np.random.default_rng(0)
-    if kind == "noise":
-        ref = rng.random((N, N)).astype(np.float32) * 60000
-        mov = rng.random((N, N)).astype(np.float32) * 60000
-    else:
-        ref = np.full((N, N), 1200.0, np.float32)
-        mov = np.full((N, N), 1200.0, np.float32)
+    return (
+        rng.random((N, N)).astype(np.float32) * 60000,
+        rng.random((N, N)).astype(np.float32) * 60000,
+    )
+
+
+def test_a_blank_pair_has_no_candidate_and_is_refused_loudly():
+    ref = np.full((N, N), 1200.0, np.float32)
     with pytest.raises(ca.CoarseRefused) as ei:
-        ca.estimate_anchor(ref, mov)
+        ca.estimate_anchor(ref, ref.copy())
     msg = str(ei.value)
     assert "peak" in msg and "ORB" in msg and "inliers" in msg, msg
+
+
+def test_a_pair_with_nothing_in_common_is_an_unverified_anchor_with_a_warning(caplog):
+    """Permissive by default: the best guess comes back, flagged, and the log says so."""
+    ref, mov = _noise_pair()
+    with caplog.at_level("WARNING"):
+        a = ca.estimate_anchor(ref, mov)
+    assert a.trusted is False and np.isfinite(a.M).all(), a
+    warned = [
+        r.getMessage() for r in caplog.records if "UNVERIFIED ANCHOR" in r.getMessage()
+    ]
+    assert warned and "peak" in warned[0] and "inliers" in warned[0], caplog.text
+
+
+def test_strict_refuses_what_the_default_only_warns_about():
+    ref, mov = _noise_pair()
+    with pytest.raises(ca.CoarseRefused, match="RANSAC inliers"):
+        ca.estimate_anchor(ref, mov, strict=True)
 
 
 def test_the_orb_fallback_runs_when_the_sweep_is_not_trusted(monkeypatch):
@@ -175,12 +195,19 @@ def test_a_disagreeing_fallback_loses_to_a_better_scoring_sweep(monkeypatch):
     assert _errors(a.M, m_true)[0] <= 1.0
 
 
-def test_the_fallback_without_enough_inliers_is_a_refusal(monkeypatch):
+def test_the_fallback_without_enough_inliers_is_unverified_and_strict_refuses(
+    monkeypatch,
+):
+    """Sweep ambiguous, ORB under-supported and disagreeing with a lower NCC: the (correct)
+    sweep is kept, flagged unverified; ``strict`` turns the same pair into a refusal."""
     monkeypatch.setattr(ca, "MIN_PEAK_RATIO", 1e9)
     monkeypatch.setattr(ca, "_orb_fallback", lambda r, m, model: (np.eye(3), 1.0, 5))
-    ref, mov, _m = _pair(1.0, 37, 60, -45)
+    ref, mov, m_true = _pair(1.0, 37, 60, -45)
+    a = ca.estimate_anchor(ref, mov)
+    assert a.method == "ncc_sweep" and a.trusted is False, a
+    assert _errors(a.M, m_true)[0] <= 1.0
     with pytest.raises(ca.CoarseRefused, match="5 RANSAC inliers"):
-        ca.estimate_anchor(ref, mov)
+        ca.estimate_anchor(ref, mov, strict=True)
 
 
 def test_only_the_rigid_model_is_offered():
