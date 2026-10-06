@@ -191,7 +191,7 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--stride",
         type=int,
-        default=128,
+        default=64,
         help="vector-lattice stride (px); window = 2 x stride. Node k is centred at "
         "W/2 + k*stride in reference-frame pixels, so every tile shares one lattice.",
     )

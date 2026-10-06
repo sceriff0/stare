@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--stride",
         type=int,
-        default=128,
+        default=64,
         help="vector-lattice stride (px); window = 2 x stride (stare.vector_grid)",
     )
     # solve
