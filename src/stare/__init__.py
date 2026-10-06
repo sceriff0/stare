@@ -17,4 +17,4 @@ The mirage pipeline's ``bin/tiled_*.py`` scripts are thin shims over these
 functions, so a pipeline run and ``stare register`` produce the same manifest.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

@@ -9,7 +9,9 @@ factor, so peak memory is a band plus the thumbnail rather than the full-resolut
 
 The anchor itself is ``stare.coarse_align.estimate_anchor``: a brute-force rotation sweep with
 normalised cross-correlation at 256 px, refined at the ``--max-dim`` thumbnail, with an ORB
-fallback; when neither is trustworthy the best guess is used with a loud UNVERIFIED warning
+fallback. When neither is trustworthy the candidates are checked at FULL resolution on a few
+small nuclear patches (``stare.probe``): a confirmed candidate is used (and its measured
+translation error removed); otherwise the best guess is used with a loud UNVERIFIED warning
 (``coarse_trusted: false`` in the M0 JSON), or refused under ``--strict-anchor``. It is
 FFT-based and its memory is a handful of thumbnail-sized canvases: measured peak RSS well under
 1 GB at 1024 px (the numbers are in conf/modules.config's TILED_COARSE note). It replaced a DISK +
@@ -48,6 +50,7 @@ from stare.coarse_align import (
     scale_transform_to_full_res,
 )
 from stare.log import configure_logging, get_logger
+from stare.probe import PROBE_SHIFT_TOL_PX, probe_boxes, verify_candidates
 from stare.slide_io import band_rows_for, decimation_factor, open_lazy, read_decimated
 from stare.tile_grid import tile_grid
 
@@ -79,6 +82,68 @@ def _timed_read(src, index, factor, which):
         f"{lo:.1f}/{med:.1f}/{hi:.1f}"
     )
     return plane
+
+
+def _probe(a, anchor, ref_nuc, factor, ref_hw):
+    """Settle an untrusted anchor at full resolution. Returns ``(anchor, shift, report)``.
+
+    ``shift`` is the full-res ``(dx, dy)`` to add to the verified anchor's translation; the
+    anchor comes back ``trusted`` only when the probes confirm it. Both slides are re-opened
+    lazily: one probe-box pair is in memory at a time.
+    """
+    from dataclasses import replace
+
+    from stare.coarse_align import REFINE_STEP_DEG
+
+    cands = [anchor, *anchor.alternatives]
+    boxes = probe_boxes(ref_nuc, factor, ref_hw)
+    # A rigid anchor is off by ONE translation, plus the refine step's rotation over the slide.
+    tol = PROBE_SHIFT_TOL_PX + np.radians(REFINE_STEP_DEG) * float(np.hypot(*ref_hw))
+    t0 = time.perf_counter()
+    ref_src, _d, ref_close = open_lazy(a.reference)
+    try:
+        mov_src, _d, mov_close = open_lazy(a.moving)
+        try:
+            winner, shift, rows = verify_candidates(
+                ref_src,
+                mov_src,
+                a.nuclear_index,
+                [scale_transform_to_full_res(c.M, factor) for c in cands],
+                boxes,
+                tol,
+            )
+        finally:
+            mov_close()
+    finally:
+        ref_close()
+    for c, row in zip(cands, rows):
+        row.update(method=c.method, angle_deg=round(float(c.angle_deg), 2))
+    report = {
+        "verified": winner is not None,
+        "n_probes": len(boxes),
+        "shift_px": [round(shift[0], 1), round(shift[1], 1)]
+        if winner is not None
+        else None,
+        "candidates": rows,
+    }
+    summary = ", ".join(
+        f"{r['method']}@{r['angle_deg']:+.1f}deg {r['confirmed']}/{r['evaluated']}"
+        for r in rows
+    )
+    took = time.perf_counter() - t0
+    if winner is None:
+        logger.warning(
+            f"coarse: full-resolution probe check could not confirm any candidate "
+            f"({len(boxes)} probes, {took:.1f}s): {summary}"
+        )
+        return anchor, (0.0, 0.0), report
+    logger.warning(
+        f"coarse: the acceptance gates failed ({anchor.note}) but the full-resolution probe "
+        f"check CONFIRMED {cands[winner].method} at {cands[winner].angle_deg:+.2f} deg "
+        f"({len(boxes)} probes, {took:.1f}s): {summary}; removing its measured offset "
+        f"dx={shift[0]:+.1f}px dy={shift[1]:+.1f}px"
+    )
+    return replace(cands[winner], trusted=True, alternatives=()), shift, report
 
 
 def _finite_or_none(x):
@@ -137,8 +202,9 @@ def main(argv=None) -> int:
         "--strict-anchor",
         action="store_true",
         help=(
-            "fail the task (CoarseRefused) when no anchor passes the acceptance gates, "
-            "instead of continuing with the best guess and a warning"
+            "fail the task (CoarseRefused) when no anchor passes the acceptance gates and "
+            "the full-resolution probe check confirms none either, instead of continuing "
+            "with the best guess and a warning"
         ),
     )
     ap.add_argument("--out-m0", required=True, help="output M0 JSON (+ reference dims)")
@@ -203,9 +269,17 @@ def main(argv=None) -> int:
 
     t0 = time.perf_counter()
     try:
-        anchor = estimate_anchor(
-            ref_nuc, mov_nuc, model=a.model, strict=a.strict_anchor
-        )
+        anchor = estimate_anchor(ref_nuc, mov_nuc, model=a.model)
+        probe_shift, probe_report = (0.0, 0.0), None
+        if not anchor.trusted:
+            anchor, probe_shift, probe_report = _probe(
+                a, anchor, ref_nuc, factor, (h, w)
+            )
+            if not anchor.trusted and a.strict_anchor:
+                raise CoarseRefused(
+                    f"no trustworthy rigid anchor (--strict-anchor). {anchor.note}; "
+                    "the full-resolution probe check confirmed no candidate"
+                )
     except CoarseRefused as exc:
         # No candidate at all (or --strict-anchor): fail the task here, naming both slides.
         raise CoarseRefused(
@@ -220,6 +294,9 @@ def main(argv=None) -> int:
     # The fit lives in thumbnail pixels; everything downstream (tile plan, per-tile source
     # regions, the stitch) is full-resolution, so lift both the map and its residual here.
     m0 = scale_transform_to_full_res(m0_ds, factor)
+    m0[:2, 2] += (
+        probe_shift  # the probes' measured translation error; zero unless verified
+    )
     coarse_tre = float(coarse_tre_ds) * factor
 
     Path(a.out_m0).write_text(
@@ -241,6 +318,8 @@ def main(argv=None) -> int:
                 "coarse_angle_deg": float(anchor.angle_deg),
                 # False: passed neither acceptance gate, kept as the best guess (see the log).
                 "coarse_trusted": bool(anchor.trusted),
+                # null: the gates passed and no probe check ran. Otherwise its verdict.
+                "coarse_probe": probe_report,
             },
             indent=2,
         )

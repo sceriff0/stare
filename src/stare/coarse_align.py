@@ -26,13 +26,16 @@ THE METHOD (research/stare-optimal-design-2026-09-27.md, section 1):
    inliers when it agrees with a sweep candidate within 1 deg (or the sweep had no candidate at
    all); a disagreeing fallback is scored by the same correlation and the better of the two wins.
 5. **Neither acceptable: return the best candidate anyway, UNVERIFIED** (``Anchor.trusted`` is
-   False) with a loud warning carrying both scores. A wrong anchor does not fail anything
+   False) with a loud warning carrying both scores, and every other candidate in
+   ``Anchor.alternatives``. The COARSE stage then settles it at FULL resolution
+   (:mod:`stare.probe`: a few small nuclear patches per candidate) and only an anchor the
+   probes cannot confirm either stays unverified. A wrong anchor does not fail anything
    downstream -- the per-tile reads simply land in the wrong place and the slide comes out
-   mis-registered with exit 0 -- so the warning and the ``trusted`` flag are the ONLY signal:
-   check that slide's registration QC. The candidate is the sweep's, unless an (under-supported)
-   ORB fit agrees with a sweep candidate or scores a higher correlation. ``strict=True``
-   restores the refusal (:class:`CoarseRefused`), which is otherwise raised only when there is
-   no candidate at all (a blank plane: no positive correlation and no ORB fit).
+   mis-registered with exit 0 -- so for that slide the warning and the ``trusted`` flag are
+   the ONLY signal: check its registration QC. The candidate is the sweep's, unless an
+   (under-supported) ORB fit agrees with a sweep candidate or scores a higher correlation.
+   ``strict=True`` restores the refusal (:class:`CoarseRefused`), which is otherwise raised
+   only when there is no candidate at all (a blank plane: no positive correlation, no ORB fit).
 
 NumPy + SciPy + scikit-image only: no torch, no kornia, no OpenCV, no JVM. The tiled container
 already carries all three. Memory is a few FFT canvases of the thumbnail (well under 1 GB at the
@@ -124,6 +127,8 @@ class Anchor:
     report's JSON as a non-standard literal).
     ``n_inliers``: RANSAC inliers for ``"orb"``; 0 for ``"ncc_sweep"`` (no correspondences).
     ``trusted``: False when the anchor passed neither acceptance gate and is the best guess.
+    ``alternatives``: the other candidates of an untrusted anchor (for :mod:`stare.probe`).
+    ``note``: why an untrusted anchor failed the gates (the scores), for the caller's message.
     """
 
     M: np.ndarray
@@ -134,6 +139,8 @@ class Anchor:
     peak_ratio: float
     angle_deg: float
     trusted: bool = True
+    alternatives: tuple = ()
+    note: str = ""
 
 
 def _model_class(model):
@@ -711,6 +718,7 @@ def estimate_anchor(ref, mov, model="euclidean", strict=False):
     sweep_usable = bool(np.isfinite(peak) and peak > 0)
     if not orb_ok and (strict or (m_orb is None and not sweep_usable)):
         raise CoarseRefused(f"no trustworthy rigid anchor. {why}. {hint}")
+    orb = None
     if m_orb is None:
         chosen = sweep
     else:
@@ -749,7 +757,18 @@ def estimate_anchor(ref, mov, model="euclidean", strict=False):
         f"{chosen.peak_ncc:.3f}). {why}. A wrong anchor fails nothing downstream: this slide "
         f"can come out MIS-REGISTERED with exit 0, so inspect its registration QC. {hint}"
     )
-    return replace(chosen, trusted=False)
+    others = [c for c in (sweep, orb) if c is not None and c is not chosen]
+    if len(refined) > 1:
+        r_peak, r_angle, r_m = refined[1]
+        others.append(
+            replace(sweep, M=r_m, peak_ncc=float(r_peak), angle_deg=_wrap_deg(r_angle))
+        )
+    return replace(
+        chosen,
+        trusted=False,
+        alternatives=tuple(replace(c, trusted=False) for c in others),
+        note=why,
+    )
 
 
 def estimate_rigid(ref, mov, model="euclidean", **_ignored):
