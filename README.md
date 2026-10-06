@@ -12,7 +12,7 @@ retired TRE-gate method) and as `drape-registration` 2.x (this method under an i
 name; replace `import drape` / `drape <stage>` with `import stare` / `stare <stage>`).
 
 ```bash
-pip install "stare-registration @ git+https://github.com/sceriff0/stare@v1.0.0"
+pip install "stare-registration @ git+https://github.com/sceriff0/stare@v1.1.0"
 
 stare register --reference ref.ome.tif --moving mov.ome.tif \
     --out mov_registered.ome.tif --manifest mov_manifest.json --workers 8
@@ -36,7 +36,8 @@ and a new tag here, then a pin bump in mirage.
 
 1. **COARSE.** A global rigid anchor from an exhaustive rotation sweep with globally
    normalised cross-correlation on tissue-masked thumbnails. It falls back to ORB + RANSAC,
-   and refuses rather than guesses.
+   and when neither is trustworthy continues with the best guess under a loud UNVERIFIED
+   warning (`coarse_trusted: false` in the M0 JSON; `--strict-anchor` refuses instead).
 2. **REG-TILE.** Per tile, displacement vectors on a slide-global lattice of 50 %-overlapping
    windows, following the particle-image-velocimetry recipe:
    - high-pass + Hann-windowed cross-correlation;

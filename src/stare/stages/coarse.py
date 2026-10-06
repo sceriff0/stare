@@ -9,7 +9,8 @@ factor, so peak memory is a band plus the thumbnail rather than the full-resolut
 
 The anchor itself is ``stare.coarse_align.estimate_anchor``: a brute-force rotation sweep with
 normalised cross-correlation at 256 px, refined at the ``--max-dim`` thumbnail, with an ORB
-fallback, and a loud REFUSAL when neither is trustworthy (see that module's docstring). It is
+fallback; when neither is trustworthy the best guess is used with a loud UNVERIFIED warning
+(``coarse_trusted: false`` in the M0 JSON), or refused under ``--strict-anchor``. It is
 FFT-based and its memory is a handful of thumbnail-sized canvases: measured peak RSS well under
 1 GB at 1024 px (the numbers are in conf/modules.config's TILED_COARSE note). It replaced a DISK +
 LightGlue matcher whose U-Net needed ~1.1 + 7.3 * Mpx GB (~32 GB at 2048 px).
@@ -64,8 +65,9 @@ def _timed_read(src, index, factor, which):
     """Read one decimated DAPI plane, logging how long it took and what came back.
 
     The intensity summary is not decoration: a blank or saturated nuclear plane (wrong
-    ``--nuclear-index``, an empty cycle) is the usual reason the anchor is REFUSED, and printing
-    the observed range here puts that diagnosis in `.command.out` next to the refusal.
+    ``--nuclear-index``, an empty cycle) is the usual reason the anchor is unverified or
+    REFUSED, and printing the observed range here puts that diagnosis in `.command.out` next
+    to the warning.
     """
     t0 = time.perf_counter()
     plane = read_decimated(src, index, factor)
@@ -89,8 +91,8 @@ def main(argv=None) -> int:
     """CLI entry point: estimate STARE's global anchor M0 and emit the tile plan.
 
     Reads the nuclear/fiducial channel of both slides at a thumbnail bounded by
-    ``--max-dim``, estimates the rigid anchor (NCC rotation sweep, ORB fallback, or a
-    refusal that fails the task), and writes the M0 JSON
+    ``--max-dim``, estimates the rigid anchor (NCC rotation sweep, ORB fallback, else the
+    best guess flagged unverified; a refusal fails the task), and writes the M0 JSON
     plus the tile-plan CSV that ``stare reg-tile`` fans out over.
 
     Returns
@@ -131,6 +133,14 @@ def main(argv=None) -> int:
     # Rigid only: SOLVE's robust affine absorbs any residual scale or shear, and a sweep over
     # scale as well as angle would multiply the cost for nothing the per-tile stage needs.
     ap.add_argument("--model", default="euclidean", choices=["euclidean"])
+    ap.add_argument(
+        "--strict-anchor",
+        action="store_true",
+        help=(
+            "fail the task (CoarseRefused) when no anchor passes the acceptance gates, "
+            "instead of continuing with the best guess and a warning"
+        ),
+    )
     ap.add_argument("--out-m0", required=True, help="output M0 JSON (+ reference dims)")
     ap.add_argument("--out-tiles", required=True, help="output tile-plan CSV")
     a = ap.parse_args(argv)
@@ -193,11 +203,11 @@ def main(argv=None) -> int:
 
     t0 = time.perf_counter()
     try:
-        anchor = estimate_anchor(ref_nuc, mov_nuc, model=a.model)
+        anchor = estimate_anchor(
+            ref_nuc, mov_nuc, model=a.model, strict=a.strict_anchor
+        )
     except CoarseRefused as exc:
-        # A wrong anchor fails NOTHING downstream -- the per-tile reads land in the wrong place
-        # and the slide is published mis-registered with exit 0 -- so an anchor nobody can
-        # vouch for fails the task here, naming both slides.
+        # No candidate at all (or --strict-anchor): fail the task here, naming both slides.
         raise CoarseRefused(
             f"coarse: REFUSED to anchor moving={Path(a.moving).name} onto "
             f"reference={Path(a.reference).name} (nuclear_index={a.nuclear_index}, "
@@ -229,6 +239,8 @@ def main(argv=None) -> int:
                 "coarse_peak_ncc": float(anchor.peak_ncc),
                 "coarse_peak_ratio": _finite_or_none(anchor.peak_ratio),
                 "coarse_angle_deg": float(anchor.angle_deg),
+                # False: passed neither acceptance gate, kept as the best guess (see the log).
+                "coarse_trusted": bool(anchor.trusted),
             },
             indent=2,
         )
@@ -253,6 +265,14 @@ def main(argv=None) -> int:
             f"coarse: residual {coarse_tre:.1f}px >= halo {a.halo}px -- the per-tile step may "
             f"not recover this. Raise --halo (reg_tiled_halo) or --max-dim "
             f"(reg_tiled_coarse_max_dim, currently decimating 1/{factor})"
+        )
+    if not anchor.trusted:
+        # A wrong anchor fails NOTHING downstream -- the per-tile reads land in the wrong place
+        # and the slide is published mis-registered with exit 0 -- so name both slides here.
+        logger.warning(
+            f"coarse: UNVERIFIED ANCHOR for moving={Path(a.moving).name} onto "
+            f"reference={Path(a.reference).name} (nuclear_index={a.nuclear_index}, thumbnail "
+            f"1/{factor}) -- inspect this slide's registration QC before using it"
         )
     # Only meaningful for the ORB fallback: the sweep has no correspondences and reports 0.
     if anchor.method == "orb" and n_inliers < 10:
