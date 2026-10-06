@@ -12,7 +12,7 @@ retired TRE-gate method) and as `drape-registration` 2.x (this method under an i
 name; replace `import drape` / `drape <stage>` with `import stare` / `stare <stage>`).
 
 ```bash
-pip install "stare-registration @ git+https://github.com/sceriff0/stare@v1.2.0"
+pip install "stare-registration @ git+https://github.com/sceriff0/stare@v1.2.1"
 
 stare register --reference ref.ome.tif --moving mov.ome.tif \
     --out mov_registered.ome.tif --manifest mov_manifest.json --workers 8

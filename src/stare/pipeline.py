@@ -39,7 +39,7 @@ def register_slide(
     *,
     tile=512,
     halo=64,
-    stride=128,
+    stride=64,
     model="euclidean",
     warp_data=None,
     out_shape=None,
