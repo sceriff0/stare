@@ -11,6 +11,10 @@ doi:10.1109/TMI.2020.2986331) with the challenge's own metrics
 
 This lives on the `benchmarking` branch. It is a harness, not part of the package.
 
+To compare STARE with VALIS and DeeperHistReg on ANHIR, on synthetic slides and on your own
+multiplex-IF data, with resource accounting, use `benchmarks/regbench/` (its README); it
+reuses this harness's cover-table, landmark and proxy code.
+
 ## What is measured
 
 ANHIR scores landmarks, not pixels. STARE registers the case's **source** image (moving) onto

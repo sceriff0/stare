@@ -1,0 +1,95 @@
+# The registration benchmark (benchmarks/, on the `benchmarking` branch only).
+#
+#   harness   the benchmark's own tests: cell scoring, the synthetic truth, STARE really run
+#             and scored end to end, resource accounting, the ANHIR and multiplex layouts
+#   methods   VALIS and DeeperHistReg installed from PyPI into their own environments and
+#             really run on the small synthetic suite, then all methods scored side by side.
+#             The comparison table is the job summary; the tables are an artifact.
+#
+# Neither job needs ANHIR or slide data: those run on the cluster (benchmarks/regbench/README.md).
+name: Benchmark
+
+on:
+  push:
+    branches: [benchmarking]
+    paths: ['benchmarks/**', 'src/**', '.github/workflows/benchmark.yml']
+  pull_request:
+    paths: ['benchmarks/**', '.github/workflows/benchmark.yml']
+  workflow_dispatch:
+
+env:
+  PYTHONPATH: src:benchmarks
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install STARE
+        run: pip install -e ".[test]" psutil
+      - name: Benchmark tests
+        run: pytest benchmarks -q
+
+  methods:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: STARE environment
+        run: |
+          python -m venv env-stare
+          env-stare/bin/pip install -q -e ".[test]" psutil
+      - name: Prepare the synthetic test suite
+        run: env-stare/bin/python -m regbench prepare synthetic --suite test --cases "$PWD/cases"
+      - name: STARE
+        run: |
+          for i in 0 1 2 3; do
+            env-stare/bin/python -m regbench run --cases cases --out results --dataset synthetic \
+              --method stare --index $i --workers 4
+          done
+      - name: VALIS environment
+        run: |
+          python -m venv env-valis
+          env-valis/bin/pip install -q valis-wsi==1.2.0 "pyvips[binary]" pytest psutil
+      - name: VALIS adapter tests
+        run: REGBENCH_TEST_CASES="$PWD/cases" env-valis/bin/python -m pytest benchmarks/regbench/tests/test_external_methods.py -q -k "valis"
+      - name: VALIS
+        run: |
+          for i in 0 1 2 3; do
+            env-valis/bin/python -m regbench run --cases cases --out results --dataset synthetic \
+              --method valis --index $i --workers 4
+          done
+      - name: DeeperHistReg environment
+        run: |
+          python -m venv env-dhr
+          env-dhr/bin/pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          env-dhr/bin/pip install -q -r benchmarks/regbench/requirements-deeperhistreg.txt pytest
+      - name: DeeperHistReg adapter tests
+        run: REGBENCH_TEST_CASES="$PWD/cases" env-dhr/bin/python -m pytest benchmarks/regbench/tests/test_external_methods.py -q -k "deeperhistreg or field_warper or block_mean"
+      - name: DeeperHistReg
+        run: |
+          for i in 0 1 2 3; do
+            env-dhr/bin/python -m regbench run --cases cases --out results --dataset synthetic \
+              --method deeperhistreg --index $i --workers 4
+          done
+      - name: Score
+        run: |
+          env-stare/bin/python -m regbench score --cases cases --out results
+          cat results/tables/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-tables
+          path: |
+            results/tables
+            results/*/synthetic/*/run.json
