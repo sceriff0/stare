@@ -69,6 +69,16 @@ def _warp_chunked(warp, xy, chunk=2_000_000):
     return out
 
 
+def jacobian_grid(hw, max_side=512):
+    """``(xy (N, 2), (rows, cols), step)``: a regular lattice over the moving slide, at most
+    ``max_side`` points a side. The scorer differentiates each method's map on it."""
+    h, w = hw
+    step = max(8, -(-max(h, w) // max_side))
+    ys, xs = np.arange(step / 2.0, h, step), np.arange(step / 2.0, w, step)
+    gx, gy = np.meshgrid(xs, ys)
+    return np.stack([gx.ravel(), gy.ravel()], axis=1), (len(ys), len(xs)), step
+
+
 def run_case(method, case, out, opts=None, label=None, workers=1, work=None, keep_work=False):
     """Register one case with one method; returns the list of variants that succeeded."""
     mod = load(method)
@@ -78,6 +88,8 @@ def run_case(method, case, out, opts=None, label=None, workers=1, work=None, kee
     points = load_points(case)
     lm = points.get("landmarks_mov", np.empty((0, 2)))
     cx = points.get("cells_mov_xy", np.empty((0, 2)))
+    grid, grid_shape, grid_step = (jacobian_grid(case.mov_hw) if case.mov_hw
+                                   else (np.empty((0, 2)), (0, 0), 1))
     work = Path(work) if work else result_dir(out, names[mod.VARIANTS[-1]], case) / "work"
     work.mkdir(parents=True, exist_ok=True)
 
@@ -99,7 +111,9 @@ def run_case(method, case, out, opts=None, label=None, workers=1, work=None, kee
             cost = mon.snapshot()
             w0, c0 = mon.raw()
             arrays = {"landmarks": _warp_chunked(warp, lm),
-                      "cells_xy": _warp_chunked(warp, cx).astype(np.float32)}
+                      "cells_xy": _warp_chunked(warp, cx).astype(np.float32),
+                      "grid": _warp_chunked(warp, grid).astype(np.float32),
+                      "grid_shape": np.array(grid_shape), "grid_step": np.array(grid_step)}
             w1, c1 = mon.raw()
             mon.exclude(w1 - w0, c1 - c0)
             d = result_dir(out, names[variant], case)

@@ -10,6 +10,21 @@ One benchmark, five datasets, the same scoring for every method:
 | `hyreco` | HyReCo: 54 sections stained, scanned, re-stained and scanned again, with manual landmarks | landmark TRE in µm; the only real same-section data with independent truth |
 | `multiplex` | your own multiplex-IF rounds, from a manifest CSV | matched Dice and centroid displacement of nuclei, as mirage's `reg_qc=2`: self-consistency, not accuracy |
 
+**Two tiers, never pooled.** `summary.md` opens with the **headline** tier, the cases with a
+published basis, and reports everything else as **secondary**:
+
+| tier | what is in it | why |
+|---|---|---|
+| headline | `hyreco` | real same-section pairs with manual landmarks |
+| headline | `semisynth`, families `grid` and `multiscale` | real texture; deformation parameters from published generators and measured residuals (see "Real images under a known map") |
+| headline | `multiplex` (cell Dice and displacement) | your data; self-consistency, read against `dice_null` |
+| secondary | `synthetic` (Gaussian-blob slides, all families, the scale suite) | image model and most amplitudes are this benchmark's own choices; kept for controlled tests and for cost against size |
+| secondary | `semisynth`, families `wave`, `bumps`, `seams` | parameters without a source; stress tests |
+| secondary | `anhir` training pairs | public landmarks, so not blind; the blind score is the challenge server's |
+
+Cell Dice is also reported on the headline `semisynth` cases, where the `truth` row gives its
+ceiling. Make those cases from your own slides and the ceiling applies to your tissue.
+
 and, for every run, **what it cost**: wall time, CPU time and peak memory of the whole process
 tree, GPU memory, and the scheduler's own accounting as a cross-check.
 
@@ -180,9 +195,22 @@ The scorer leaves `dev_*` cases out of every table.
 
 ### Real images under a known map (`semisynth`)
 
-`prepare semisynth --image X` takes the `--windows` (4) windows of `--n` (4096) px with most
-tissue, plus one development window, and pairs each with five deformation families (`wave`,
-`multiscale`, `grid`, `bumps`, `seams`). The reference is the untouched window; the moving
+`prepare semisynth --image X` takes the `--windows` (8) windows of `--n` (4096) px with most
+tissue, plus one development window, and pairs each with five deformation families. Two are
+headline:
+
+- `grid`: a 9 × 9 grid of random control-point moves, SD drawn from 3-7 px (Casamitjana et
+  al., arXiv:2104.14873 `[PARTIAL: synthetic-dataset sections only]`).
+- `multiscale`: random fields at 1/8, 1/16 and 1/32 of the window, the resolutions SynthMorph
+  sums (arXiv:2004.10282 `[PARTIAL: method text and ablation; Table I not extracted]`), scaled
+  to an RMS displacement of `--residual-um` (2 µm). That is the non-rigid residual measured
+  between two scans of one section: median 1.6 µm (Lotz et al., arXiv:2106.13150 `[PARTIAL:
+  abstract, intro, sec. 4.2, Tables 2-3]`) to 1.9 µm (Muhlich et al. 2022, PMC9525007
+  `[PARTIAL: main text and methods through an extractor]`). The equal split of energy between
+  the three scales is this benchmark's choice: nobody has measured that spectrum. The slide
+  must carry a pixel size, or give `--pixel-size-um`.
+
+`wave`, `bumps` and `seams` are secondary. The reference is the untouched window; the moving
 slide is the same image through the known map, with fresh noise at `--noise` times the
 image's own background noise. Run it once per slide; give a slide from each tissue or
 scanner you care about. With `--mov-image Y`, a different round of the same section that is
@@ -269,6 +297,14 @@ say how to read it:
   nuclear radii, i.e. what chance pairing gives in that tissue. A Dice near it means nothing.
 - the `truth` row (synthetic and semisynth): the moving cells under the true map. Its Dice
   is the ceiling for that pair, below 1 because of noise, resampling and lost cells.
+
+**Regularity** — every method also warps a regular lattice of moving points (at most 512 a
+side). `fold_pct` is the share of it where the Jacobian determinant of the map is not
+positive, i.e. where the map folds, and `sd_log_jac` the spread of its logarithm: the two
+numbers registration papers report beside accuracy. A method can buy overlap with an
+implausible map; these show it. `frac_not_improved` is the share of cases whose median error
+is not below the unregistered pose, failed runs included, and `med_p90_tre_um` the median
+over cases of the 90th-percentile error in µm.
 
 **Uncertainty** — every headline aggregate has a 95 % bootstrap interval over cases
 (`*_lo`, `*_hi`), and `tables/pairwise.csv` compares every two methods case by case with a

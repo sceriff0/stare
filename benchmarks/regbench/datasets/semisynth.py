@@ -20,6 +20,21 @@ Two variants, by where the moving pixels come from:
            truth is ``g`` composed with that upstream registration, so its residual is a floor
            under every method's error here.
 
+**Deformations.** Two families have their parameters from published work and make the
+headline tier:
+
+``grid``        a 9 x 9 grid of i.i.d. Gaussian control-point moves, SD drawn from 3-7 px,
+                spline-interpolated (Casamitjana et al., arXiv:2104.14873)
+``multiscale``  random fields at 1/8, 1/16 and 1/32 of the window (the resolutions SynthMorph
+                sums, arXiv:2004.10282), scaled so the displacement's RMS is ``--residual-um``
+                (2 um): the non-rigid residual measured between two scans of one section is a
+                median of 1.6 um (Lotz et al., arXiv:2106.13150) to 1.9 um (Muhlich et al.
+                2022). The equal split of energy between the three scales is this file's
+                choice; nobody has measured the spectrum of real inter-cycle deformation.
+
+``wave``, ``bumps`` and ``seams`` have parameters without a source and are scored in the
+secondary tier, never pooled with the two above.
+
 ``--windows K`` test windows are taken where there is most tissue, each paired with every
 deformation family; one more window makes the ``dev_*`` cases that ``regbench calibrate``
 chooses options on. Test and development windows never overlap.
@@ -39,13 +54,20 @@ from ..imageio import pixel_size_um, write_nuclear_tiles
 from . import synthetic
 
 _POSE = dict(theta=2.0, shift=(30.0, -20.0))
-FAMILIES = {
-    "wave": dict(amp=10.0, wavelength=1500.0),
-    "multiscale": dict(field="multiscale"),
-    "grid": dict(field="grid"),
-    "bumps": dict(field="bumps"),
-    "seams": dict(field="seams"),
-}
+HEADLINE = ("grid", "multiscale")
+FAMILIES = ("grid", "multiscale", "wave", "bumps", "seams")
+
+
+def family_spec(family, n, px_um, residual_um, seed):
+    """The deformation parameters of one case; ``px_um`` turns micrometres into pixels."""
+    if family == "grid":
+        return dict(field="grid", grid_sd=float(np.random.default_rng(seed).uniform(3.0, 7.0)))
+    if family == "multiscale":
+        # three scales, two components each, equal energy: RMS of |w| is residual_um
+        rms = residual_um / px_um / math.sqrt(6.0)
+        return dict(field="multiscale", scales=(n / 8.0, n / 16.0, n / 32.0), rms=(rms,) * 3)
+    return {"wave": dict(amp=10.0, wavelength=1500.0), "bumps": dict(field="bumps"),
+            "seams": dict(field="seams")}[family]
 PROBE = 256  # side of the patches a candidate window is sampled with
 _MARGIN = 16
 
@@ -186,6 +208,10 @@ def plan(a):
         windows, bg_sd = pick_windows(src, a.n, a.windows + 1, threshold)
     finally:
         src.close()
+    px = a.pixel_size_um or pixel_size_um(a.image)
+    if not px:
+        raise SystemExit(f"{a.image}: no pixel size in the header; give --pixel-size-um "
+                         "(the multiscale deformation is defined in micrometres)")
     stem = a.name or Path(a.image).name.split(".")[0]
     key = zlib.crc32(stem.encode()) % 100_000
     # the window with the least tissue of those picked is the development one
@@ -195,9 +221,10 @@ def plan(a):
     jobs = []
     for i, role in order:
         x, y, _ = windows[i]
-        for j, (family, kw) in enumerate(FAMILIES.items()):
-            spec = {**synthetic._BASE, **_POSE, **kw, "n": a.n, "family": family,
-                    "seed": 1_000_000 + key * 100 + i * 10 + j}
+        for j, family in enumerate(FAMILIES):
+            seed = 1_000_000 + key * 100 + i * 10 + j
+            spec = {**synthetic._BASE, **_POSE, "n": a.n, "family": family, "seed": seed,
+                    **family_spec(family, a.n, px, a.residual_um, seed)}
             name = f"{stem}_w{i}_{family}"
             jobs.append((f"dev_{name}" if role == "dev" else name, spec, (x, y)))
     noise = 0.0 if a.mov_image else a.noise * bg_sd

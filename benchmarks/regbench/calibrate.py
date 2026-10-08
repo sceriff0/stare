@@ -68,6 +68,9 @@ def choose(rows):
     """The lock: per method the best (candidate, variant) of the scored dev landmark rows."""
     import numpy as np
 
+    # where real-image dev cases exist, choose on the headline tier only
+    if any(r.get("tier") == "headline" for r in rows):
+        rows = [r for r in rows if r.get("tier") == "headline"]
     lock = {}
     for method, cands in CANDIDATES.items():
         table = []

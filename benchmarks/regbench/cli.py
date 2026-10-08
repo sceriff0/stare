@@ -67,7 +67,9 @@ def build_parser():
     ss.add_argument("--mov-channel", type=int, default=0)
     ss.add_argument("--name", default=None, help="prefix of the case ids (default: the file name)")
     ss.add_argument("--n", type=int, default=4096, help="window side, px")
-    ss.add_argument("--windows", type=int, default=4, help="test windows (one more is dev)")
+    ss.add_argument("--windows", type=int, default=8, help="test windows (one more is dev)")
+    ss.add_argument("--residual-um", type=float, default=2.0,
+                    help="RMS displacement of the multiscale family, micrometres")
     ss.add_argument("--diameter", type=float, default=20.0, help="nuclear diameter, px")
     ss.add_argument("--noise", type=float, default=1.0,
                     help="added noise, in units of the image's background noise (same-image variant)")

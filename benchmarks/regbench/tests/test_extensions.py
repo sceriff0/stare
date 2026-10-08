@@ -122,6 +122,7 @@ def test_dev_cases_are_scored_only_on_request(tmp_path):
 def _semisynth_args(image, cases, **kw):
     base = dict(image=str(image), channel=0, mov_image=None, mov_channel=0, name="slide", n=512,
                 windows=2, diameter=synthetic.NUCLEUS_DIAMETER, noise=1.0, pixel_size_um=0.5,
+                residual_um=2.0,
                 cases=str(cases), index=None, workers=1, force=False)
     return argparse.Namespace(**{**base, **kw})
 
@@ -159,6 +160,49 @@ def test_semisynth_cases_carry_the_truth(real_like, tmp_path):
     by = {r["method"]: r for r in done["cells"]}
     assert by["truth"]["dice_matched"] > 0.8 > by["initial"]["dice_matched"]
     assert by["truth"]["displacement_px_p50"] < 1.0
+    # a real-image case under a literature-derived map is headline, and aggregated as such
+    assert {r["tier"] for r in done["cells"]} == {"headline"}
+    assert any(r["subset"] == "headline" for r in done["cells_agg"])
+    assert "## Headline" in (tmp_path / "out" / "tables" / "summary.md").read_text()
+
+
+def test_multiscale_amplitude_is_the_measured_residual():
+    """RMS displacement of the headline multiscale field is --residual-um, in pixels."""
+    n, px = 4096, 0.325
+    kw = semisynth.family_spec("multiscale", n, px, 2.0, seed=1)
+    assert kw["scales"] == (512.0, 256.0, 128.0)
+    spec = {**synthetic._BASE, "n": n, "seed": 1, **kw}
+    xs = np.linspace(0, n - 1, 200)
+    dx, dy = synthetic.extra_field(spec)(*np.meshgrid(xs, xs))
+    assert abs(np.sqrt(np.mean(dx**2 + dy**2)) * px - 2.0) < 0.3
+    sd = semisynth.family_spec("grid", n, px, 2.0, seed=1)["grid_sd"]
+    assert 3.0 <= sd <= 7.0
+
+
+def test_tiers_and_folding():
+    def case(dataset, group):
+        return Case(dataset=dataset, case_id="c", group=group, ref_nuclear="", mov_nuclear="",
+                    ref_image="", mov_image="", modality="fluorescence", diagonal=1.0)
+
+    assert score.tier_of(case("hyreco", "HE-PHH3")) == "headline"
+    assert score.tier_of(case("multiplex", "P1")) == "headline"
+    assert score.tier_of(case("semisynth", "grid")) == "headline"
+    assert score.tier_of(case("semisynth", "seams")) == "secondary"
+    assert score.tier_of(case("synthetic", "grid")) == "secondary"
+    assert score.tier_of(case("anhir", "COAD")) == "secondary"
+
+    from regbench.methods import jacobian_grid
+
+    xy, shape, step = jacobian_grid((300, 400))
+    pack = lambda w: {"grid": w, "grid_shape": np.array(shape), "grid_step": np.array(step)}  # noqa: E731
+    smooth = score.jacobian_stats(pack(xy * 1.1 + 3.0))
+    assert smooth["fold_pct"] == 0.0 and smooth["sd_log_jac"] < 1e-6
+    folded = xy.copy()
+    left = xy[:, 0] < 200
+    folded[left, 0] = 200 - xy[left, 0]  # the left half is mirrored: it folds
+    out = score.jacobian_stats(pack(folded))
+    assert 40 < out["fold_pct"] < 60
+    assert np.isnan(score.jacobian_stats(None)["fold_pct"])
 
 
 def test_semisynth_reference_is_the_untouched_window(real_like, tmp_path):

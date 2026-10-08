@@ -26,6 +26,18 @@ challenge does; the ``common`` subset is the cases every variant actually regist
 ``*_hi``, 95 %), and ``pairwise.csv`` a paired two-sided Wilcoxon signed-rank test between
 every two methods on the per-case values, Holm-corrected within a dataset and metric.
 
+**Tiers.** Every case is ``headline`` or ``secondary`` (:func:`tier_of`), and the two are
+aggregated and tested separately, never pooled. Headline is what has a published basis:
+HyReCo; real images under the ``grid`` and ``multiscale`` maps; your multiplex slides (cell
+metric only). Secondary is everything whose parameters this benchmark chose: the Gaussian-blob
+slides, the other deformation families, and the ANHIR training pairs, whose landmarks are
+public (their blind score is the challenge server's, see ``anhir-submission``).
+
+**Regularity.** Each method also warps a regular lattice of moving points; ``fold_pct`` is the
+share of it where the map's Jacobian determinant is not positive (the map folds) and
+``sd_log_jac`` the spread of its logarithm, the two numbers registration papers report
+(VoxelMorph, Learn2Reg).
+
 ``dev_*`` cases are what method options were chosen on (``regbench calibrate``) and are left
 out of every table unless ``--dev`` is given.
 """
@@ -46,12 +58,40 @@ from .cases import list_cases, load_points, polys, result_dir
 RESERVED = ("tables", "tables_dev", "logs", "calibration")
 NULL_SHIFT_RADII = 4.0
 BOOTSTRAP_B = 2000
+TIERS = ("headline", "secondary")
+HEADLINE_FAMILIES = ("grid", "multiscale")  # semisynth families with parameters from papers
 PSEUDO = ("truth",)  # not a registration: kept out of ranks and tests
 FLAT_FIELD_S = 1e5  # STARE's own bound for "no local structure left" (CV_RING_MAX_LOG10_S)
 CELL_KEYS = ("n_ref", "n_moving", "n_pairs", "pair_fraction", "pair_fraction_moving",
              "dice_matched", "iou_mean", "iou_p50", "frac_iou_ge_0.5", "displacement_px_p50",
              "displacement_px_p90", "displacement_px_mean", "displacement_um_p50",
              "displacement_um_p90", "match_radius_px")
+
+
+def tier_of(case):
+    if case.dataset in ("hyreco", "multiplex"):
+        return "headline"
+    if case.dataset == "semisynth" and case.group in HEADLINE_FAMILIES:
+        return "headline"
+    return "secondary"
+
+
+def jacobian_stats(warped):
+    """``fold_pct`` and ``sd_log_jac`` of a method's map from its warped lattice."""
+    out = {"fold_pct": math.nan, "sd_log_jac": math.nan}
+    if warped is None or "grid" not in warped or min(warped["grid_shape"]) < 3:
+        return out
+    rows, cols = (int(v) for v in warped["grid_shape"])
+    step = float(warped["grid_step"])
+    g = warped["grid"].astype(float).reshape(rows, cols, 2)
+    jac = (np.gradient(g[..., 0], step, axis=1) * np.gradient(g[..., 1], step, axis=0)
+           - np.gradient(g[..., 0], step, axis=0) * np.gradient(g[..., 1], step, axis=1))
+    jac = jac[np.isfinite(jac)]
+    if len(jac):
+        out["fold_pct"] = float(100.0 * np.mean(jac <= 0))
+        if np.any(jac > 0):
+            out["sd_log_jac"] = float(np.std(np.log(jac[jac > 0])))
+    return out
 
 
 def landmark_stats(warped, target, source, diagonal):
@@ -71,6 +111,7 @@ def landmark_stats(warped, target, source, diagonal):
         "tre_um_median": math.nan, "tre_um_p90": math.nan,
         "initial_tre_px_median": float(np.median(init)),
         "robustness": float(np.mean(tre < init)),
+        "not_improved": bool(np.median(tre) >= np.median(init)),
     }
 
 
@@ -185,7 +226,8 @@ def _score_case(job):
     mpx = (sum(h * w for h, w in (case.ref_hw, case.mov_hw)) / 1e6
            if case.ref_hw and case.mov_hw else math.nan)
     for v in variants:
-        head = {"dataset": case.dataset, "case_id": case.case_id, "group": case.group, "method": v}
+        head = {"dataset": case.dataset, "tier": tier_of(case), "case_id": case.case_id,
+                "group": case.group, "method": v}
         warped, run, problem = None, {}, ""
         if v != "initial":
             d = result_dir(out, v, case)
@@ -205,6 +247,7 @@ def _score_case(job):
         s_chosen = solve.get("smoothing_s", math.nan)
         tail = {"time_min": run.get("register_s", math.nan) / 60.0 if run.get("ok") else math.nan,
                 "imputed_initial": imputed, "problem": problem[:200],
+                **({"fold_pct": 0.0, "sd_log_jac": 0.0} if v == "initial" else jacobian_stats(warped)),
                 # STARE only: the smoothing SOLVE chose, and whether it is a flat field (the
                 # mesh then adds nothing to the rigid anchor)
                 "stare_smoothing_s": s_chosen,
@@ -221,9 +264,11 @@ def _score_case(job):
             cell_rows.append({**head, **_cell_record(ref_cells, moved, case), **tail})
     if ref_cells is not None and "cells_mov_xy_truth" in points and len(ref_cells):
         moved = mov_cells.with_xy(points["cells_mov_xy_truth"].astype(float))
-        cell_rows.append({"dataset": case.dataset, "case_id": case.case_id, "group": case.group,
+        cell_rows.append({"dataset": case.dataset, "tier": tier_of(case),
+                          "case_id": case.case_id, "group": case.group,
                           "method": "truth", **_cell_record(ref_cells, moved, case),
                           "time_min": math.nan, "imputed_initial": False, "problem": "",
+                          "fold_pct": math.nan, "sd_log_jac": math.nan,
                           "stare_smoothing_s": math.nan, "stare_flat_field": ""})
     if lm_rows:
         for r, k in zip(lm_rows, rankdata([r["rtre_median"] for r in lm_rows], method="average")):
@@ -263,8 +308,9 @@ def pairwise(rows, key, higher_is_better=False):
     from scipy.stats import wilcoxon
 
     out = []
-    for ds in sorted({r["dataset"] for r in rows}):
-        mine = [r for r in rows if r["dataset"] == ds and r["method"] not in PSEUDO]
+    for ds, tier in sorted({(r["dataset"], r.get("tier", "")) for r in rows}):
+        mine = [r for r in rows if r["dataset"] == ds and r.get("tier", "") == tier
+                and r["method"] not in PSEUDO]
         methods = list(dict.fromkeys(r["method"] for r in mine))
         by = {m: {r["case_id"]: r[key] for r in mine if r["method"] == m} for m in methods}
         block = []
@@ -277,7 +323,7 @@ def pairwise(rows, key, higher_is_better=False):
                     continue
                 better = d > 0 if higher_is_better else d < 0
                 p = float(wilcoxon(d).pvalue) if len(d) >= 6 and np.any(d != 0) else math.nan
-                block.append({"dataset": ds, "metric": key, "method_a": a, "method_b": b,
+                block.append({"dataset": ds, "tier": tier, "metric": key, "method_a": a, "method_b": b,
                               "n_cases": len(d), "median_a_minus_b": float(np.median(d)),
                               "a_better": int(better.sum()),
                               "b_better": int((~better & (d != 0)).sum()),
@@ -307,6 +353,12 @@ def _agg_landmarks(rows):
             "avg_max_rtre": _mean(rows, "rtre_max"),
             "med_median_tre_px": _median(rows, "tre_px_median"),
             "med_median_tre_um": _median(rows, "tre_um_median"),
+            "med_p90_tre_px": _median(rows, "tre_px_p90"),
+            "med_p90_tre_um": _median(rows, "tre_um_p90"),
+            # failed runs count: they are scored at the initial pose
+            "frac_not_improved": _mean(rows, "not_improved"),
+            "med_fold_pct": _median(rows, "fold_pct"), "max_fold_pct": _max(rows, "fold_pct"),
+            "med_sd_log_jac": _median(rows, "sd_log_jac"),
             "avg_robustness": _mean(rows, "robustness"), "avg_rank": _mean(rows, "rank"),
             **_ci(rows, [("avg_median_rtre", "rtre_median", np.mean),
                          ("med_median_tre_px", "tre_px_median", np.median)])}
@@ -317,6 +369,7 @@ def _agg_cells(rows):
             "med_dice_matched": _median(rows, "dice_matched"),
             "avg_dice_null": _mean(rows, "dice_null"),
             "avg_pair_fraction_null": _mean(rows, "pair_fraction_null"),
+            "med_fold_pct": _median(rows, "fold_pct"), "max_fold_pct": _max(rows, "fold_pct"),
             "avg_pair_fraction": _mean(rows, "pair_fraction"),
             "med_displacement_px_p50": _median(rows, "displacement_px_p50"),
             "med_displacement_px_p90": _median(rows, "displacement_px_p90"),
@@ -334,6 +387,7 @@ def aggregate(rows, agg):
         for m in dict.fromkeys(r["method"] for r in mine):
             of_m = [r for r in mine if r["method"] == m]
             subsets = [("all", of_m), ("common", [r for r in of_m if r["case_id"] not in imputed])]
+            subsets += [(t, [r for r in of_m if r.get("tier") == t]) for t in TIERS]
             subsets += [(f"group:{g}", [r for r in of_m if r["group"] == g])
                         for g in sorted({r["group"] for r in of_m})]
             for name, sub in subsets:
@@ -402,30 +456,43 @@ def score(cases_root, out, datasets=None, workers=1, dev=False):
     write_csv(tables / "scaling.csv", scaling)
     write_csv(tables / "pairwise.csv", pairs)
 
-    head = [r for r in lm_agg if r["subset"] in ("all", "common")]
-    cell_head = [r for r in ce_agg if r["subset"] in ("all", "common")]
+    lm_cols = ["dataset", "method", "n_cases", "n_imputed", "med_median_tre_px",
+               "med_median_tre_px_lo", "med_median_tre_px_hi", "med_median_tre_um",
+               "med_p90_tre_um", "avg_median_rtre", "frac_not_improved", "med_fold_pct",
+               "avg_rank", "median_time_min"]
+    ce_cols = ["dataset", "method", "n_cases", "n_imputed", "avg_dice_matched",
+               "avg_dice_matched_lo", "avg_dice_matched_hi", "avg_dice_null", "avg_pair_fraction",
+               "med_displacement_px_p50", "med_displacement_px_p90", "med_displacement_um_p50",
+               "med_fold_pct"]
+    pw_cols = ["dataset", "metric", "method_a", "method_b", "n_cases", "median_a_minus_b",
+               "a_better", "b_better", "p_holm"]
+    notes = {
+        "headline": "Cases with a published basis: HyReCo, real images under the `grid` and "
+                    "`multiscale` maps, and your multiplex slides (cells only).",
+        "secondary": "Cases whose parameters this benchmark chose (Gaussian-blob slides, other "
+                     "deformation families) and the ANHIR training pairs, whose landmarks are "
+                     "public. Not pooled with the headline.",
+    }
     parts = ["# Registration benchmark\n"]
-    if head:
-        parts += ["## Landmarks (rTRE = TRE / reference diagonal)\n",
-                  markdown(head, ["dataset", "method", "subset", "n_cases", "n_imputed",
-                                  "avg_median_rtre", "med_median_rtre", "med_median_tre_px",
-                                  "med_median_tre_px_lo", "med_median_tre_px_hi",
-                                  "med_median_tre_um", "avg_robustness", "avg_rank",
-                                  "median_time_min"]), ""]
-    if cell_head:
-        parts += ["## Cells (matched Dice and centroid displacement of native nuclei)\n",
-                  "Without a `truth` row this is self-consistency, not accuracy. `truth` is the "
-                  "ceiling (cells under the known map); `avg_dice_null` is chance pairing "
-                  f"(cells shifted {NULL_SHIFT_RADII:g} radii).\n",
-                  markdown(cell_head, ["dataset", "method", "subset", "n_cases", "n_imputed",
-                                       "avg_dice_matched", "avg_dice_matched_lo",
-                                       "avg_dice_matched_hi", "avg_dice_null", "avg_pair_fraction",
-                                       "med_displacement_px_p50", "med_displacement_px_p90",
-                                       "med_displacement_um_p50", "median_time_min"]), ""]
-    if pairs:
-        parts += ["## Paired comparisons (Wilcoxon signed-rank over cases, Holm-corrected)\n",
-                  markdown(pairs, ["dataset", "metric", "method_a", "method_b", "n_cases",
-                                   "median_a_minus_b", "a_better", "b_better", "p_holm"]), ""]
+    for tier in TIERS:
+        lm_t = [r for r in lm_agg if r["subset"] == tier]
+        ce_t = [r for r in ce_agg if r["subset"] == tier]
+        pw_t = [r for r in pairs if r["tier"] == tier]
+        if not (lm_t or ce_t):
+            continue
+        parts += [f"## {tier.capitalize()}\n", notes[tier] + "\n"]
+        if lm_t:
+            parts += ["### Landmarks (TRE against independent or known truth)\n",
+                      markdown(lm_t, lm_cols), ""]
+        if ce_t:
+            parts += ["### Cells (matched Dice and centroid displacement of native nuclei)\n",
+                      "Without a `truth` row this is self-consistency, not accuracy. `truth` is "
+                      "the ceiling (cells under the known map); `avg_dice_null` is chance "
+                      f"pairing (cells shifted {NULL_SHIFT_RADII:g} radii).\n",
+                      markdown(ce_t, ce_cols), ""]
+        if pw_t:
+            parts += ["### Paired comparisons (Wilcoxon signed-rank over cases, Holm-corrected)\n",
+                      markdown(pw_t, pw_cols), ""]
     if res_agg:
         parts += ["## Resources (whole process tree; successful runs only)\n",
                   markdown([r for r in res_agg if r["n_runs"]],
