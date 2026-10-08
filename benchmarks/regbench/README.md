@@ -1,12 +1,14 @@
 # regbench: STARE against VALIS and DeeperHistReg
 
-One benchmark, three datasets, the same scoring for every method:
+One benchmark, five datasets, the same scoring for every method:
 
 | dataset | what it is | scored by |
 |---|---|---|
 | `synthetic` | nuclear slides warped by a **known** map (rigid, smooth, mixed, noise, lost nuclei, sparse tissue, dim rounds, a smaller moving slide) | landmark TRE against the truth **and** cell Dice / displacement |
-| `anhir` | the 230 ANHIR training pairs (brightfield, mixed stains) | the challenge's landmark metrics (rTRE, robustness, rank) |
-| `multiplex` | your own multiplex-IF rounds, from a manifest CSV | matched Dice and centroid displacement of nuclei, as mirage's `reg_qc=2` |
+| `semisynth` | windows of a **real** nuclear image warped by the same known maps | the same, on real texture |
+| `anhir` | the 230 ANHIR training pairs (brightfield, mixed stains); the 251 hidden pairs for a server submission | the challenge's landmark metrics (rTRE, robustness, rank) |
+| `hyreco` | HyReCo: 54 sections stained, scanned, re-stained and scanned again, with manual landmarks | landmark TRE in µm; the only real same-section data with independent truth |
+| `multiplex` | your own multiplex-IF rounds, from a manifest CSV | matched Dice and centroid displacement of nuclei, as mirage's `reg_qc=2`: self-consistency, not accuracy |
 
 and, for every run, **what it cost**: wall time, CPU time and peak memory of the whole process
 tree, GPU memory, and the scheduler's own accounting as a cross-check.
@@ -151,10 +153,65 @@ sbatch -c 8  --mem=32G -t 2:00:00 $S/prepare.sbatch synthetic --suite full
 sbatch -c 16 --mem=32G -t 4:00:00 $S/prepare.sbatch anhir --data-root /path/to/anhir
 sbatch -c 16 --mem=96G -t 8:00:00 $S/prepare.sbatch multiplex --manifest rounds.csv --diameter 24
 
-# 2. run every method on every dataset, then score
-$S/submit.sh --datasets "synthetic anhir multiplex" --methods "stare valis deeperhistreg" \
-    -- --partition=cpu --constraint=<one-node-type>
+sbatch -c 8  --mem=32G -t 1:00:00 $S/prepare.sbatch synthetic --suite dev
+sbatch -c 8  --mem=32G -t 2:00:00 $S/prepare.sbatch semisynth --image /data/slide.ome.tif --channel 0 --diameter 24
+sbatch -c 4  --mem=32G -t 24:00:00 $S/prepare.sbatch hyreco --data-root /data/HyReCo-Additional
+
+# 2. choose the competitors' options on the dev_* cases (before any test result exists)
+$S/submit_calibrate.sh -- --partition=cpu --constraint=<one-node-type>
+
+# 3. when the lock job is done: run every method on every dataset, both arms, then score
+$S/submit.sh -- --partition=cpu --constraint=<one-node-type>
 ```
+
+### Two arms per competitor
+
+| arm | results named | options |
+|---|---|---|
+| default | `valis*`, `deeperhistreg` | each package's defaults |
+| recommended | `valis_rec*`, `deeperhistreg_rec` | what `regbench calibrate` locked, else the package's documented higher-accuracy setting (VALIS micro-registration at 25 % of the slide's long side; DeeperHistReg `default_initial_nonrigid_high_resolution`) |
+
+STARE has one arm, its released defaults: nothing about it is chosen on data the benchmark
+holds. Calibration (`regbench/calibrate.py`) gives each competitor the same budget, six
+candidates fixed in the source, run on `dev_*` cases whose seeds and image windows no scored
+case shares; the winner is the lowest mean per-case median rTRE. Both arms are always
+reported, so the effect of the choice is visible. `submit.sh --arm default` skips step 2.
+The scorer leaves `dev_*` cases out of every table.
+
+### Real images under a known map (`semisynth`)
+
+`prepare semisynth --image X` takes the `--windows` (4) windows of `--n` (4096) px with most
+tissue, plus one development window, and pairs each with five deformation families (`wave`,
+`multiscale`, `grid`, `bumps`, `seams`). The reference is the untouched window; the moving
+slide is the same image through the known map, with fresh noise at `--noise` times the
+image's own background noise. Run it once per slide; give a slide from each tissue or
+scanner you care about. With `--mov-image Y`, a different round of the same section that is
+already registered to `X`, the moving pixels are real and independent; the truth then
+includes that upstream registration's residual, which is a floor under every error.
+
+### HyReCo
+
+Download from IEEE DataPort (doi:10.21227/pzj5-bs61; free login) and unpack so that one
+folder holds `HE/<case>.tif|.csv` and `PHH3/<case>.tif|.csv`. Landmarks are in millimetres
+and are converted with the TIFF's resolution tags or `--pixel-size-um`; a case whose
+landmarks fall outside its image is refused. The layout and units are from the dataset page
+`[PARTIAL: DataPort page read through a summariser; no file was opened]`, and **this adapter
+has not been run on the real files**, only on synthetic stand-ins: check the first prepared
+case before submitting the array. `--ref-dir` / `--mov-dir` point it at any two stain folders.
+
+### ANHIR's hidden pairs
+
+```bash
+python -m regbench prepare anhir --data-root /path/to/anhir --status evaluation --cases $REGBENCH_CASES
+# ... run the methods ...
+python -m regbench anhir-submission --cases $REGBENCH_CASES --out $REGBENCH_OUT \
+    --data-root /path/to/anhir --variant stare --dest submission_stare
+```
+
+writes `registration-results.csv` and one warped-landmark CSV per case. The column names
+follow the BIRL convention from memory (`[MEMORY]`; the challenge's submission page did not
+load on 2026-10-08): check them, and whether the server still accepts uploads, before
+relying on this. Training-pair numbers are not a blind test: their landmarks are public.
 
 `submit.sh` submits one array per (dataset, method) and a scorer that waits for all of them.
 Every method gets the **same** allocation (`REGBENCH_CPUS`=8, `REGBENCH_MEM`=64G,
@@ -203,6 +260,26 @@ the distance between paired centroids (px, and µm when the pixel size is known)
 together with `pair_fraction`**: a registration that is off by more than the match radius
 pairs few cells, or pairs neighbours by chance. One simplification against mirage: a cell is
 one outer ring (holes dropped, a MultiPolygon keeps its largest part).
+
+On real slides this is **self-consistency**: it shows the two segmentations overlap after
+warping, on the channel the methods registered, with no independent truth. Two references
+say how to read it:
+
+- `dice_null`, `pair_fraction_null`: the same score with the warped cells shifted four
+  nuclear radii, i.e. what chance pairing gives in that tissue. A Dice near it means nothing.
+- the `truth` row (synthetic and semisynth): the moving cells under the true map. Its Dice
+  is the ceiling for that pair, below 1 because of noise, resampling and lost cells.
+
+**Uncertainty** — every headline aggregate has a 95 % bootstrap interval over cases
+(`*_lo`, `*_hi`), and `tables/pairwise.csv` compares every two methods case by case with a
+two-sided Wilcoxon signed-rank test, Holm-corrected within a dataset and metric. With fewer
+than six paired cases no p-value is given.
+
+**Deformations** — besides the two-wave field, `multiscale` (three random fields of
+correlation length 2000 / 500 / 125 px), `grid` (9 × 9 random control points, SD 3-7 px),
+`bumps` (local Gaussian bumps of width 25, 100 and 400 px) and `seams` (a shift per 1024 px
+tile, SD 1.5-6 px, discontinuous). Bump peaks are 0.2-0.6 of their width, at most 50 px, so
+the map does not fold; the 25 px bumps are finer than STARE's 64 px lattice on purpose.
 
 **Resources** — `regbench/resources.py`. A sampler thread walks the process tree five times
 a second, because a method's work is not one process (STARE's tile pool, VALIS's JVM and

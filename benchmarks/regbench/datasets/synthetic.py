@@ -5,8 +5,18 @@ slide is the same tissue seen through a forward map
 
     g(p) = c + R(theta) (p - c) + t + w(p)            moving pixel p  ->  reference position
 
-with ``w`` a smooth two-wave displacement of peak amplitude ``amp`` px and wavelength
-``wavelength`` px: ``mov(p) = base(g(p))``. Because ``g`` is written in the direction a
+with ``w`` a displacement field: ``mov(p) = base(g(p))``. ``w`` is a smooth two-wave field of
+peak amplitude ``amp`` px and wavelength ``wavelength`` px, plus, by ``field``:
+
+``multiscale``  three random fields of correlation length ``scales`` px and RMS ``rms`` px
+                each, summed (energy at several scales at once)
+``grid``        a 9 x 9 grid of i.i.d. Gaussian control-point moves of SD ``grid_sd`` px,
+                cubic-spline interpolated (Casamitjana et al., arXiv:2104.14873)
+``bumps``       ``bump_count`` local Gaussian bumps of width ``bump_sigma`` px, each peaking at
+                0.2-0.6 sigma (at most 50 px), so no single bump folds the map
+``seams``       an independent shift of SD ``seam_sd`` px per ``seam_tile`` px tile: the jump a
+                stitching error leaves at a tile boundary. Not continuous, on purpose.
+ Because ``g`` is written in the direction a
 registration is scored in, the truth for any moving point is one evaluation of ``g``, with no
 inversion and no interpolation.
 
@@ -36,7 +46,10 @@ _MARGIN = 16  # around a resampled patch, so the cubic prefilter's edge transien
 SCALE_SIZES = (1024, 2048, 4096, 8192, 16384, 32768, 65536)
 
 _BASE = dict(n=4096, theta=0.0, shift=(0.0, 0.0), amp=0.0, wavelength=1500.0, noise=0.02,
-             dropout=0.0, gain=1.0, keep=0.7, seed=0, mov_hw=None, max_cells=None)
+             dropout=0.0, gain=1.0, keep=0.7, seed=0, mov_hw=None, max_cells=None,
+             field="wave", scales=(2000.0, 500.0, 125.0), rms=(8.0, 3.0, 1.0), grid_sd=5.0,
+             bump_sigma=100.0, bump_count=20, seam_tile=1024, seam_sd=3.0)
+_POSE = dict(theta=2.0, shift=(30.0, -20.0))  # the rigid part every non-rigid family shares
 
 
 def _suite(rows):
@@ -88,8 +101,99 @@ SUITES = {
            for i, k in enumerate([0.4, 0.15])]
         + [(f"dim_{i}", dict(theta=2.0, shift=(30.0, -20.0), amp=10.0, gain=g, seed=70 + i))
            for i, g in enumerate([0.4, 0.1])]
+        + [(f"multiscale_{i}", dict(**_POSE, field="multiscale", rms=r, seed=80 + i))
+           for i, r in enumerate([(4.0, 1.5, 0.5), (8.0, 3.0, 1.0), (16.0, 6.0, 2.0)])]
+        + [(f"grid_{i}", dict(**_POSE, field="grid", grid_sd=sd, seed=90 + i))
+           for i, sd in enumerate([3.0, 5.0, 7.0])]
+        # sigma 25 px is finer than STARE's 64 px vector lattice: a case it cannot represent
+        + [(f"bumps_{i}", dict(**_POSE, field="bumps", bump_sigma=sg, bump_count=k, seed=110 + i))
+           for i, (sg, k) in enumerate([(25.0, 60), (100.0, 20), (400.0, 4)])]
+        + [(f"seams_{i}", dict(**_POSE, field="seams", seam_sd=sd, seed=120 + i))
+           for i, sd in enumerate([1.5, 3.0, 6.0])]
     ),
+    # Development cases: what `regbench calibrate` chooses each method's options on. Their
+    # seeds are used nowhere else and the scorer leaves `dev_*` cases out of every table.
+    "dev": _suite([
+        ("dev_wave", dict(**_POSE, amp=10.0, seed=900)),
+        ("dev_multiscale", dict(**_POSE, field="multiscale", seed=901)),
+        ("dev_grid", dict(**_POSE, field="grid", seed=902)),
+        ("dev_bumps", dict(**_POSE, field="bumps", seed=903)),
+        ("dev_seams", dict(**_POSE, field="seams", seed=904)),
+        ("dev_dropout", dict(**_POSE, amp=10.0, dropout=0.3, seed=905)),
+    ]),
 }
+FIELDS = ("wave", "multiscale", "grid", "bumps", "seams")
+
+
+def _spline_field(rng, n, spacing, sd):
+    """A random field from i.i.d. N(0, sd) nodes ``spacing`` px apart, cubic-interpolated."""
+    from scipy.ndimage import spline_filter
+
+    m = int(math.ceil(n / spacing)) + 3
+    coef = [spline_filter(rng.normal(0.0, sd, (m, m)), order=3, mode="nearest") for _ in (0, 1)]
+
+    def f(x, y):
+        from scipy.ndimage import map_coordinates
+
+        at = [y / spacing + 1.0, x / spacing + 1.0]
+        return [map_coordinates(c, at, order=3, mode="nearest", prefilter=False) for c in coef]
+
+    return f
+
+
+def extra_field(spec):
+    """``w(x, y) -> (dx, dy)`` of ``spec["field"]``, or None for the plain two-wave field."""
+    kind, n = spec.get("field", "wave"), spec["n"]
+    if kind == "wave":
+        return None
+    if kind not in FIELDS:
+        raise ValueError(f"unknown field {kind!r}; expected one of {FIELDS}")
+    rng = np.random.default_rng(spec["seed"] + 15485863)
+    if kind == "multiscale":
+        probe = np.linspace(0, n - 1, 96)
+        px, py = np.meshgrid(probe, probe)
+        parts = []
+        for length, rms in zip(spec["scales"], spec["rms"]):
+            f = _spline_field(rng, n, float(length), 1.0)
+            # the interpolant of unit nodes has RMS below 1: scale each scale to its target
+            k = [rms / max(float(np.sqrt(np.mean(v**2))), 1e-9) for v in f(px, py)]
+            parts.append((f, k))
+
+        def w(x, y):
+            dx = dy = 0.0
+            for f, k in parts:
+                vx, vy = f(x, y)
+                dx, dy = dx + k[0] * vx, dy + k[1] * vy
+            return dx, dy
+
+        return w
+    if kind == "grid":
+        return _spline_field(rng, n, n / 8.0, float(spec["grid_sd"]))
+    if kind == "bumps":
+        sg, k = float(spec["bump_sigma"]), int(spec["bump_count"])
+        cen = rng.uniform(0, n, (k, 2))
+        peak = np.minimum(rng.uniform(0.2, 0.6, k) * sg, 50.0)
+        ang = rng.uniform(0, 2 * math.pi, k)
+        ax, ay = peak * np.cos(ang), peak * np.sin(ang)
+
+        def w(x, y):
+            dx, dy = np.zeros(np.shape(x)), np.zeros(np.shape(x))
+            for (cx, cy), bx, by in zip(cen, ax, ay):
+                e = np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2.0 * sg * sg))
+                dx, dy = dx + bx * e, dy + by * e
+            return dx, dy
+
+        return w
+    t = int(spec["seam_tile"])
+    m = int(math.ceil(n / t))
+    shifts = rng.normal(0.0, float(spec["seam_sd"]), (m, m, 2))
+
+    def w(x, y):
+        ix = np.clip(np.floor(np.asarray(x) / t).astype(np.int64), 0, m - 1)
+        iy = np.clip(np.floor(np.asarray(y) / t).astype(np.int64), 0, m - 1)
+        return shifts[iy, ix, 0], shifts[iy, ix, 1]
+
+    return w
 
 
 def forward_map(spec):
@@ -101,6 +205,7 @@ def forward_map(spec):
     tx, ty = spec["shift"]
     amp, k = spec["amp"], 2.0 * math.pi / spec["wavelength"]
     ph = np.random.default_rng(spec["seed"] + 7919).uniform(0, 2 * math.pi, 4)
+    extra = extra_field(spec)
 
     def g(xy):
         xy = np.asarray(xy, dtype=float)
@@ -110,6 +215,9 @@ def forward_map(spec):
         if amp:
             gx = gx + amp * np.sin(k * x + ph[0]) * np.cos(k * y + ph[1])
             gy = gy + amp * np.cos(k * x + ph[2]) * np.sin(k * y + ph[3])
+        if extra is not None:
+            dx, dy = extra(x, y)
+            gx, gy = gx + dx, gy + dy
         return np.stack([gx, gy], axis=-1)
 
     return g
@@ -280,7 +388,11 @@ def prepare_one(cases_root, name, spec, workers=1, force=False):
         ref_hw=[spec["n"], spec["n"]], mov_hw=list(scene.mov_hw),
         extra={"spec": {k: v for k, v in spec.items()}},
     )
-    return write_case(cases_root, case, lm_mov, lm_ref, mov_cells, ref_cells)
+    # Where a perfect registration puts the moving outlines: scoring them gives the cell
+    # metric's ceiling for this pair (noise, resampling and dropout, no registration error).
+    truth = forward_map(spec)(mov_cells.xy)
+    return write_case(cases_root, case, lm_mov, lm_ref, mov_cells, ref_cells,
+                      cells_mov_xy_truth=truth.astype(np.float32))
 
 
 def prepare(a):

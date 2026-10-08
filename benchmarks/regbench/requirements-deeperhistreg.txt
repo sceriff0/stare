@@ -26,3 +26,4 @@ torchsummary
 torchio
 tifffile
 psutil
+zarr

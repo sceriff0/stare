@@ -26,6 +26,11 @@ Options (``--opt key=value``):
 ``config``    a ``deeperhistreg.configs`` factory name (default ``default_initial_nonrigid``)
 ``max_dim``   long side of the images handed over (default 8192)
 ``device``    default ``cuda:0`` when available, else ``cpu``
+``direction`` ``swapped`` (default, above) or ``native``: the moving slide as DeeperHistReg's
+              source and the reference as its target, the way the package is meant to be
+              called. Its field then maps reference -> moving, and the point map is that
+              field inverted numerically (:func:`inverse_warper`). Use it with ``--label`` to
+              measure what the swap costs.
 """
 
 from __future__ import annotations
@@ -55,8 +60,15 @@ def to_rgb8(case, which, out, max_dim):
     from PIL import Image
 
     Image.MAX_IMAGE_PIXELS = None  # ANHIR's medium images exceed PIL's bomb guard
-    if case.modality == "brightfield":
-        with Image.open(getattr(case, f"{which}_image")) as im:
+    path = str(getattr(case, f"{which}_image"))
+    if case.modality == "brightfield" and path.lower().endswith((".tif", ".tiff")):
+        from ..imageio import (
+            read_rgb_reduced,  # a whole-slide TIFF: never read at full size
+        )
+
+        rgb, f = read_rgb_reduced(path, max_dim)
+    elif case.modality == "brightfield":
+        with Image.open(path) as im:
             rgb = np.asarray(im.convert("RGB"))
         f = max(1, math.ceil(max(rgb.shape[:2]) / max_dim))
         rgb = block_mean(rgb, f).round().clip(0, 255).astype(np.uint8)
@@ -127,6 +139,30 @@ def field_warper(field, ref_hw, mov_hw, f_ref, f_mov, warp_landmarks=_linear_fie
     return warp
 
 
+def inverse_warper(forward, hw, iters=30, tol=0.05):
+    """The inverse of a point map ``forward`` (defined on an ``hw`` image), by Newton steps
+    with the Jacobian of ``forward``'s best affine fit. A point whose residual stays above
+    1 px comes back NaN, which the scorer counts at its initial position."""
+    h, w = hw
+    gx, gy = np.meshgrid(np.linspace(0, w - 1, 24), np.linspace(0, h - 1, 24))
+    src = np.stack([gx.ravel(), gy.ravel()], axis=1)
+    coef, *_ = np.linalg.lstsq(np.c_[src, np.ones(len(src))], forward(src), rcond=None)
+    lin_inv = np.linalg.inv(coef[:2].T)
+
+    def warp(xy):
+        xy = np.asarray(xy, dtype=float).reshape(-1, 2)
+        x = (xy - coef[2]) @ lin_inv.T
+        for _ in range(iters):
+            r = xy - forward(x)
+            if not len(r) or np.abs(r).max() < tol:
+                break
+            x = x + r @ lin_inv.T
+        x[np.hypot(*(xy - forward(x)).T) > 1.0] = np.nan
+        return x
+
+    return warp
+
+
 def _dist_version(name):
     from importlib.metadata import PackageNotFoundError, version
 
@@ -171,8 +207,12 @@ def register(case, work, opts):
                                     target_resample_ratio=1.0)
     params["save_final_images"] = False  # only the field is needed
     out = work / "out"
+    direction = opts.get("direction", "swapped")
+    if direction not in ("swapped", "native"):
+        raise ValueError(f"direction must be swapped or native, got {direction!r}")
+    src_p, tgt_p = (ref_p, mov_p) if direction == "swapped" else (mov_p, ref_p)
     deeperhistreg.run_registration(
-        source_path=str(ref_p), target_path=str(mov_p), output_path=str(out),
+        source_path=str(src_p), target_path=str(tgt_p), output_path=str(out),
         registration_parameters=params, case_name="case", save_displacement_field=True,
         copy_target=False, delete_temporary_results=False, temporary_path=str(work / "tmp"))
     field_p = out / "displacement_field.mha"
@@ -184,10 +224,12 @@ def register(case, work, opts):
     field = sitk.GetArrayFromImage(sitk.ReadImage(str(field_p)))
     if field.ndim != 3 or field.shape[0] != 2:
         raise RuntimeError(f"unexpected displacement field shape {field.shape}")
-    from dhr_utils import warping  # the package's own module (it extends sys.path on import)
+    from dhr_utils import (
+        warping,  # the package's own module (it extends sys.path on import)
+    )
 
     info = {"version": _dist_version("deeperhistreg"), "torch": torch.__version__,
-            "device": device, "config": config, "factor_ref": f_ref, "factor_mov": f_mov,
+            "device": device, "config": config, "direction": direction, "factor_ref": f_ref, "factor_mov": f_mov,
             "field_shape": list(field.shape),
             "implementation": {
                 "package": "deeperhistreg", "source": str(Path(deeperhistreg.__file__).parent),
@@ -197,7 +239,10 @@ def register(case, work, opts):
                 "point_warp": "dhr_utils.warping.warp_landmarks",
                 "benchmark_side": [
                     "roles swapped: reference given as source, moving as target, so the "
-                    "backward field is the moving -> reference point map (maintainer's recipe, issue #12)",
+                    "backward field is the moving -> reference point map (maintainer's recipe, issue #12)"
+                    if direction == "swapped" else
+                    "native roles (moving as source); the reference -> moving field is inverted "
+                    "numerically for the point map",
                     f"inputs converted to 8-bit RGB, block-averaged x{f_ref} / x{f_mov} to <= {max_dim} px",
                     "fluorescence inverted to dark-on-white" if case.modality != "brightfield" else "brightfield passed as is",
                     "field -> full-resolution coordinates as apply_deformation_pyvips does (centre pad, stretch)",
@@ -205,4 +250,9 @@ def register(case, work, opts):
     pp = out / "postprocessing_params.json"
     if pp.exists():
         info["postprocessing_params"] = json.loads(pp.read_text())
-    yield "deeperhistreg", field_warper(field, ref_hw, mov_hw, f_ref, f_mov, warping.warp_landmarks), info
+    if direction == "swapped":
+        warp = field_warper(field, ref_hw, mov_hw, f_ref, f_mov, warping.warp_landmarks)
+    else:
+        to_moving = field_warper(field, mov_hw, ref_hw, f_mov, f_ref, warping.warp_landmarks)
+        warp = inverse_warper(to_moving, case.ref_hw or [v * f_ref for v in ref_hw])
+    yield "deeperhistreg", warp, info

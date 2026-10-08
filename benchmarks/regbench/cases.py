@@ -11,6 +11,7 @@ A dataset's ``prepare`` writes one folder per case::
                                          perfect registration puts them in the reference
 ``cells_mov_xy`` / ``cells_mov_off``    nuclear outlines segmented on the NATIVE moving image
 ``cells_ref_xy`` / ``cells_ref_off``    nuclear outlines segmented on the reference image
+``cells_mov_xy_truth``                  (known-truth cases) the moving outlines under the true map
 
 A method reads the two images and warps ``landmarks_mov`` and ``cells_mov_xy`` into the
 reference frame, nothing else. It writes::
@@ -89,7 +90,7 @@ def write_npz(path, **arrays):
 
 
 def write_case(cases_root, case, landmarks_mov=None, landmarks_ref=None, cells_mov=None,
-               cells_ref=None):
+               cells_ref=None, **extra_arrays):
     """Write points first and ``case.json`` last: its presence means the case is complete."""
     d = case_dir(cases_root, case.dataset, case.case_id)
     case.dir = str(d)
@@ -101,6 +102,7 @@ def write_case(cases_root, case, landmarks_mov=None, landmarks_ref=None, cells_m
     for key, ps in (("cells_mov", cells_mov), ("cells_ref", cells_ref)):
         if ps is not None:
             arrays[f"{key}_xy"], arrays[f"{key}_off"] = ps.xy.astype(np.float32), ps.off
+    arrays.update({k: np.asarray(v) for k, v in extra_arrays.items() if v is not None})
     write_npz(d / "points.npz", **arrays)
     write_json(d / "case.json", asdict(case))
     return d

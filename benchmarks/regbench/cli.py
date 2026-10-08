@@ -4,6 +4,8 @@
 ``list``               the number of prepared cases of a dataset (sizes a SLURM array), or their ids
 ``run``                register ONE case with ONE method (``--case-id`` or ``--index``)
 ``score``              score every variant under ``--out``; writes ``<out>/tables``
+``calibrate``          pick each method's options from its runs on the ``dev_*`` cases
+``anhir-submission``   lay a variant's warped ANHIR landmarks out for the challenge server
 
 Run with ``PYTHONPATH=src:benchmarks`` from the repository root.
 """
@@ -35,12 +37,14 @@ def build_parser():
 
     s = prep.add_parser("synthetic")
     common(s)
-    s.add_argument("--suite", default="full", choices=("test", "ci", "full", "scale"))
+    s.add_argument("--suite", default="full", choices=("test", "ci", "full", "scale", "dev"))
 
     an = prep.add_parser("anhir")
     common(an)
     an.add_argument("--data-root", required=True, help="folder holding dataset_medium.csv")
     an.add_argument("--proxy", default="lum", choices=("lum", "hema"))
+    an.add_argument("--status", default="training", choices=("training", "evaluation", "all"),
+                    help="evaluation pairs have hidden targets: see `anhir-submission`")
     an.add_argument("--tissue", nargs="*", default=None)
     an.add_argument("--case-id", nargs="*", type=int, default=None)
     an.add_argument("--limit", type=int, default=None)
@@ -53,6 +57,29 @@ def build_parser():
     m.add_argument("--tile", type=int, default=2048)
     m.add_argument("--max-cells", type=int, default=0,
                    help="score a random sample of this many moving cells (0 = all)")
+
+    ss = prep.add_parser("semisynth")
+    common(ss)
+    ss.add_argument("--image", required=True, help="OME-TIFF with a real nuclear channel")
+    ss.add_argument("--channel", type=int, default=0)
+    ss.add_argument("--mov-image", default=None,
+                    help="another round of the same section, already registered to --image")
+    ss.add_argument("--mov-channel", type=int, default=0)
+    ss.add_argument("--name", default=None, help="prefix of the case ids (default: the file name)")
+    ss.add_argument("--n", type=int, default=4096, help="window side, px")
+    ss.add_argument("--windows", type=int, default=4, help="test windows (one more is dev)")
+    ss.add_argument("--diameter", type=float, default=20.0, help="nuclear diameter, px")
+    ss.add_argument("--noise", type=float, default=1.0,
+                    help="added noise, in units of the image's background noise (same-image variant)")
+    ss.add_argument("--pixel-size-um", type=float, default=None)
+
+    hy = prep.add_parser("hyreco")
+    common(hy)
+    hy.add_argument("--data-root", default=".", help="folder holding HE/ and PHH3/")
+    hy.add_argument("--ref-dir", default=None)
+    hy.add_argument("--mov-dir", default=None)
+    hy.add_argument("--pixel-size-um", type=float, default=None,
+                    help="default: the TIFF's resolution tags")
 
     lst = sub.add_parser("list")
     lst.add_argument("--cases", required=True)
@@ -79,13 +106,31 @@ def build_parser():
     sc.add_argument("--out", required=True)
     sc.add_argument("--dataset", nargs="*", default=None, choices=DATASETS)
     sc.add_argument("--workers", type=int, default=_cpus())
+    sc.add_argument("--dev", action="store_true",
+                    help="score the dev_* cases instead of leaving them out")
+
+    cal = sub.add_parser("calibrate")
+    cal.add_argument("--cases", required=True)
+    cal.add_argument("--out", required=True, help="where the calibration runs were written")
+    cal.add_argument("--lock", default=None, help="default: <out>/params.lock.json")
+    cal.add_argument("--opts-for", default=None, metavar="METHOD",
+                     help="print the recommended arm's options of one method and exit")
+    cal.add_argument("--print-configs", action="store_true",
+                     help="list `method label opts` of every candidate, for the submit script")
+
+    sm = sub.add_parser("anhir-submission")
+    sm.add_argument("--cases", required=True)
+    sm.add_argument("--out", required=True)
+    sm.add_argument("--data-root", required=True)
+    sm.add_argument("--variant", required=True, help="e.g. stare, valis_micro, deeperhistreg")
+    sm.add_argument("--dest", required=True)
     return ap
 
 
 def _prepare(a):
-    from .datasets import anhir, multiplex, synthetic
+    import importlib
 
-    return {"synthetic": synthetic, "anhir": anhir, "multiplex": multiplex}[a.dataset].prepare(a)
+    return importlib.import_module(f".datasets.{a.dataset}", __package__).prepare(a)
 
 
 def _run(a):
@@ -129,7 +174,20 @@ def main(argv=None):
         return 0
     if a.cmd == "run":
         return _run(a)
+    if a.cmd == "calibrate":
+        from . import calibrate
+
+        if a.opts_for:
+            lock = a.lock or f"{a.out}/params.lock.json"
+            print(" ".join(f"{k}={v}" for k, v in calibrate.recommended(a.opts_for, lock)[0].items()))
+            return 0
+        return calibrate.main(a)
+    if a.cmd == "anhir-submission":
+        from .datasets import anhir
+
+        anhir.export_submission(a.cases, a.out, a.data_root, a.variant, a.dest)
+        return 0
     from .score import score
 
-    score(a.cases, a.out, a.dataset, a.workers)
+    score(a.cases, a.out, a.dataset, a.workers, dev=a.dev)
     return 0

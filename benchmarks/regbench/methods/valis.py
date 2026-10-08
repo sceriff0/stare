@@ -17,6 +17,11 @@ Options (``--opt key=value``); anything not given is VALIS's own default:
 
 ``max_image_dim_px`` ``max_processed_image_dim_px`` ``max_non_rigid_registration_dim_px``
 ``micro_dim``     ``max_non_rigid_registration_dim_px`` of ``register_micro``
+``micro_fraction`` size the micro pass as this fraction of the slide's long side, never below
+                  VALIS's default (4096 px): ``micro_fraction=0.25`` is the sizing of VALIS's
+                  own examples (docs/examples.rst, ``micro_reg_fraction``). When the slide is
+                  no larger than the first non-rigid pass there is nothing finer to register,
+                  so the pass is skipped and ``valis_micro`` is the ``valis`` result.
 ``micro=0``       skip the micro pass (no ``valis_micro``)
 ``micro_rigid=1`` also run ``MicroRigidRegistrar`` inside ``register()`` (off upstream; the
                   mirage pipeline turns it on). Use ``--label`` to keep its results apart.
@@ -95,10 +100,20 @@ def register(case, work, opts):
         yield "valis", warper(True), info
         if _truthy(opts.get("micro", 1)):
             micro = {"reference_img_f": str(ref_f), "align_to_reference": True}
+            long_side = max(max(case.ref_hw or [0]), max(case.mov_hw or [0]))
+            first = kwargs.get("max_non_rigid_registration_dim_px",
+                               registration.DEFAULT_MAX_NON_RIGID_REG_SIZE)
+            skipped = "micro_fraction" in opts and 0 < long_side <= first
+            if "micro_fraction" in opts:
+                micro["max_non_rigid_registration_dim_px"] = max(
+                    registration.DEFAULT_MAX_MICRO_REG_SIZE,
+                    int(round(float(opts["micro_fraction"]) * long_side)))
             if "micro_dim" in opts:
                 micro["max_non_rigid_registration_dim_px"] = int(opts["micro_dim"])
-            reg.register_micro(**micro)
-            yield "valis_micro", warper(True), {**info, "micro": {k: str(v) for k, v in micro.items()}}
+            if not skipped:
+                reg.register_micro(**micro)
+            yield "valis_micro", warper(True), {**info, "micro_skipped": skipped,
+                                                "micro": {k: str(v) for k, v in micro.items()}}
     finally:
         try:  # a live BioFormats JVM keeps the interpreter from exiting
             registration.kill_jvm()

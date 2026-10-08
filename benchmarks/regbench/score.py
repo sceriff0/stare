@@ -11,8 +11,23 @@ closer than the unregistered pose) and the method's rank by median rTRE.
 **Cells** (synthetic, multiplex) -- mirage's reg_qc=2 full-transform record: matched Dice,
 per-pair IoU and centroid displacement of natively segmented nuclei (``regbench.cells``).
 
+On real slides that number is SELF-CONSISTENCY, not accuracy: it says the two segmentations
+overlap after warping, with no independent truth. Two references make it readable:
+
+``dice_null``   the same score with the warped cells shifted by ``NULL_SHIFT_RADII`` nuclear
+                radii, i.e. what chance pairing of neighbours gives in this tissue
+``truth``       (cases with a known map) a pseudo-method: the moving cells under the TRUE map.
+                Its Dice is the ceiling, what a perfect registration scores here.
+
 A case a variant failed on is scored at the initial pose (``imputed_initial``), as the
 challenge does; the ``common`` subset is the cases every variant actually registered.
+
+**Uncertainty.** Aggregates carry a percentile bootstrap interval over cases (``*_lo``,
+``*_hi``, 95 %), and ``pairwise.csv`` a paired two-sided Wilcoxon signed-rank test between
+every two methods on the per-case values, Holm-corrected within a dataset and metric.
+
+``dev_*`` cases are what method options were chosen on (``regbench calibrate``) and are left
+out of every table unless ``--dev`` is given.
 """
 
 from __future__ import annotations
@@ -28,7 +43,10 @@ from scipy.stats import rankdata
 from . import DATASETS, cells
 from .cases import list_cases, load_points, polys, result_dir
 
-RESERVED = ("tables", "logs")
+RESERVED = ("tables", "tables_dev", "logs", "calibration")
+NULL_SHIFT_RADII = 4.0
+BOOTSTRAP_B = 2000
+PSEUDO = ("truth",)  # not a registration: kept out of ranks and tests
 FLAT_FIELD_S = 1e5  # STARE's own bound for "no local structure left" (CV_RING_MAX_LOG10_S)
 CELL_KEYS = ("n_ref", "n_moving", "n_pairs", "pair_fraction", "pair_fraction_moving",
              "dice_matched", "iou_mean", "iou_p50", "frac_iou_ge_0.5", "displacement_px_p50",
@@ -50,6 +68,7 @@ def landmark_stats(warped, target, source, diagonal):
         "rtre_max": float(np.max(r)),
         "tre_px_median": float(np.median(tre)), "tre_px_mean": float(np.mean(tre)),
         "tre_px_p90": float(np.percentile(tre, 90)), "tre_px_max": float(np.max(tre)),
+        "tre_um_median": math.nan, "tre_um_p90": math.nan,
         "initial_tre_px_median": float(np.median(init)),
         "robustness": float(np.mean(tre < init)),
     }
@@ -121,7 +140,7 @@ def aggregate_resources(rows):
 
 def scaling_table(lm, ce, res):
     """One row per (size, method) of the synthetic ``scale`` suite: accuracy and cost."""
-    key = lambda r: (r["case_id"], r["method"])  # noqa: E731
+    key = lambda r: (r["case_id"], r["method"])
     lm_by = {key(r): r for r in lm if r["group"] == "scale"}
     ce_by = {key(r): r for r in ce if r["group"] == "scale"}
     res_by = {key(r): r for r in res if r["group"] == "scale"}
@@ -192,15 +211,84 @@ def _score_case(job):
                 "stare_flat_field": bool(s_chosen >= FLAT_FIELD_S) if s_chosen == s_chosen else ""}
         if tgt is not None and len(tgt):
             w = src if warped is None else warped["landmarks"]
-            lm_rows.append({**head, **landmark_stats(w, tgt, src, case.diagonal), **tail})
+            st = landmark_stats(w, tgt, src, case.diagonal)
+            if case.pixel_size_um:
+                st["tre_um_median"] = st["tre_px_median"] * case.pixel_size_um
+                st["tre_um_p90"] = st["tre_px_p90"] * case.pixel_size_um
+            lm_rows.append({**head, **st, **tail})
         if ref_cells is not None and mov_cells is not None and len(ref_cells) and len(mov_cells):
             moved = mov_cells if warped is None else mov_cells.with_xy(warped["cells_xy"])
-            rec = cells.score_cells(ref_cells, moved, case.pixel_size_um)
-            cell_rows.append({**head, **{k: rec.get(k, math.nan) for k in CELL_KEYS}, **tail})
+            cell_rows.append({**head, **_cell_record(ref_cells, moved, case), **tail})
+    if ref_cells is not None and "cells_mov_xy_truth" in points and len(ref_cells):
+        moved = mov_cells.with_xy(points["cells_mov_xy_truth"].astype(float))
+        cell_rows.append({"dataset": case.dataset, "case_id": case.case_id, "group": case.group,
+                          "method": "truth", **_cell_record(ref_cells, moved, case),
+                          "time_min": math.nan, "imputed_initial": False, "problem": "",
+                          "stare_smoothing_s": math.nan, "stare_flat_field": ""})
     if lm_rows:
         for r, k in zip(lm_rows, rankdata([r["rtre_median"] for r in lm_rows], method="average")):
             r["rank"] = float(k)
     return lm_rows, cell_rows, res_rows
+
+
+def _cell_record(ref_cells, moved, case):
+    rec = cells.score_cells(ref_cells, moved, case.pixel_size_um)
+    out = {k: rec.get(k, math.nan) for k in CELL_KEYS}
+    shift = NULL_SHIFT_RADII * rec["median_cell_radius_px"]
+    null = cells.score_cells(ref_cells, moved.with_xy(moved.xy + [shift, 0.0]), case.pixel_size_um)
+    out["dice_null"], out["pair_fraction_null"] = null["dice_matched"], null["pair_fraction"]
+    return out
+
+
+def bootstrap_ci(values, stat, b=BOOTSTRAP_B, seed=0):
+    """95 % percentile interval of ``stat`` over cases resampled with replacement."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if len(v) < 3:
+        return math.nan, math.nan
+    idx = np.random.default_rng(seed).integers(0, len(v), (b, len(v)))
+    lo, hi = np.percentile(stat(v[idx], axis=1), (2.5, 97.5))
+    return float(lo), float(hi)
+
+
+def _ci(rows, spec):
+    out = {}
+    for name, key, stat in spec:
+        out[f"{name}_lo"], out[f"{name}_hi"] = bootstrap_ci([r[key] for r in rows], stat)
+    return out
+
+
+def pairwise(rows, key, higher_is_better=False):
+    """Every two methods of a dataset compared case by case on ``key``."""
+    from scipy.stats import wilcoxon
+
+    out = []
+    for ds in sorted({r["dataset"] for r in rows}):
+        mine = [r for r in rows if r["dataset"] == ds and r["method"] not in PSEUDO]
+        methods = list(dict.fromkeys(r["method"] for r in mine))
+        by = {m: {r["case_id"]: r[key] for r in mine if r["method"] == m} for m in methods}
+        block = []
+        for i, a in enumerate(methods):
+            for b in methods[i + 1 :]:
+                ids = sorted(set(by[a]) & set(by[b]))
+                d = np.array([by[a][c] - by[b][c] for c in ids], dtype=float)
+                d = d[np.isfinite(d)]
+                if not len(d):
+                    continue
+                better = d > 0 if higher_is_better else d < 0
+                p = float(wilcoxon(d).pvalue) if len(d) >= 6 and np.any(d != 0) else math.nan
+                block.append({"dataset": ds, "metric": key, "method_a": a, "method_b": b,
+                              "n_cases": len(d), "median_a_minus_b": float(np.median(d)),
+                              "a_better": int(better.sum()),
+                              "b_better": int((~better & (d != 0)).sum()),
+                              "p_wilcoxon": p, "p_holm": math.nan})
+        ps = [(r["p_wilcoxon"], i) for i, r in enumerate(block) if r["p_wilcoxon"] == r["p_wilcoxon"]]
+        run = 0.0
+        for rank, (p, i) in enumerate(sorted(ps)):
+            run = max(run, min(1.0, p * (len(ps) - rank)))  # Holm step-down
+            block[i]["p_holm"] = run
+        out += block
+    return out
 
 
 def _mean(rows, key):
@@ -218,16 +306,23 @@ def _agg_landmarks(rows):
             "med_median_rtre": _median(rows, "rtre_median"),
             "avg_max_rtre": _mean(rows, "rtre_max"),
             "med_median_tre_px": _median(rows, "tre_px_median"),
-            "avg_robustness": _mean(rows, "robustness"), "avg_rank": _mean(rows, "rank")}
+            "med_median_tre_um": _median(rows, "tre_um_median"),
+            "avg_robustness": _mean(rows, "robustness"), "avg_rank": _mean(rows, "rank"),
+            **_ci(rows, [("avg_median_rtre", "rtre_median", np.mean),
+                         ("med_median_tre_px", "tre_px_median", np.median)])}
 
 
 def _agg_cells(rows):
     return {"avg_dice_matched": _mean(rows, "dice_matched"),
             "med_dice_matched": _median(rows, "dice_matched"),
+            "avg_dice_null": _mean(rows, "dice_null"),
+            "avg_pair_fraction_null": _mean(rows, "pair_fraction_null"),
             "avg_pair_fraction": _mean(rows, "pair_fraction"),
             "med_displacement_px_p50": _median(rows, "displacement_px_p50"),
             "med_displacement_px_p90": _median(rows, "displacement_px_p90"),
-            "med_displacement_um_p50": _median(rows, "displacement_um_p50")}
+            "med_displacement_um_p50": _median(rows, "displacement_um_p50"),
+            **_ci(rows, [("avg_dice_matched", "dice_matched", np.mean),
+                         ("med_displacement_px_p50", "displacement_px_p50", np.median)])}
 
 
 def aggregate(rows, agg):
@@ -270,10 +365,10 @@ def markdown(rows, columns):
     return "\n".join(lines)
 
 
-def score(cases_root, out, datasets=None, workers=1):
+def score(cases_root, out, datasets=None, workers=1, dev=False):
     jobs = []
     for ds in datasets or DATASETS:
-        cs = list_cases(cases_root, ds)
+        cs = [c for c in list_cases(cases_root, ds) if c.case_id.startswith("dev_") == dev]
         if cs:
             variants = find_variants(out, ds)
             jobs += [(str(out), c, variants) for c in cs]
@@ -292,7 +387,10 @@ def score(cases_root, out, datasets=None, workers=1):
     res_agg = aggregate_resources(res) if res else []
     lm_agg, ce_agg = aggregate(lm, _agg_landmarks), aggregate(ce, _agg_cells)
 
-    tables = Path(out) / "tables"
+    pairs = (pairwise(lm, "rtre_median") + pairwise(ce, "dice_matched", higher_is_better=True)
+             + pairwise(ce, "displacement_px_p50"))
+
+    tables = Path(out) / ("tables_dev" if dev else "tables")
     tables.mkdir(parents=True, exist_ok=True)
     write_csv(tables / "landmarks_cases.csv", lm)
     write_csv(tables / "landmarks_aggregates.csv", lm_agg)
@@ -302,6 +400,7 @@ def score(cases_root, out, datasets=None, workers=1):
     write_csv(tables / "resources_aggregates.csv", res_agg)
     scaling = scaling_table(lm, ce, res)
     write_csv(tables / "scaling.csv", scaling)
+    write_csv(tables / "pairwise.csv", pairs)
 
     head = [r for r in lm_agg if r["subset"] in ("all", "common")]
     cell_head = [r for r in ce_agg if r["subset"] in ("all", "common")]
@@ -310,13 +409,23 @@ def score(cases_root, out, datasets=None, workers=1):
         parts += ["## Landmarks (rTRE = TRE / reference diagonal)\n",
                   markdown(head, ["dataset", "method", "subset", "n_cases", "n_imputed",
                                   "avg_median_rtre", "med_median_rtre", "med_median_tre_px",
-                                  "avg_robustness", "avg_rank", "median_time_min"]), ""]
+                                  "med_median_tre_px_lo", "med_median_tre_px_hi",
+                                  "med_median_tre_um", "avg_robustness", "avg_rank",
+                                  "median_time_min"]), ""]
     if cell_head:
         parts += ["## Cells (matched Dice and centroid displacement of native nuclei)\n",
+                  "Without a `truth` row this is self-consistency, not accuracy. `truth` is the "
+                  "ceiling (cells under the known map); `avg_dice_null` is chance pairing "
+                  f"(cells shifted {NULL_SHIFT_RADII:g} radii).\n",
                   markdown(cell_head, ["dataset", "method", "subset", "n_cases", "n_imputed",
-                                       "avg_dice_matched", "avg_pair_fraction",
+                                       "avg_dice_matched", "avg_dice_matched_lo",
+                                       "avg_dice_matched_hi", "avg_dice_null", "avg_pair_fraction",
                                        "med_displacement_px_p50", "med_displacement_px_p90",
                                        "med_displacement_um_p50", "median_time_min"]), ""]
+    if pairs:
+        parts += ["## Paired comparisons (Wilcoxon signed-rank over cases, Holm-corrected)\n",
+                  markdown(pairs, ["dataset", "metric", "method_a", "method_b", "n_cases",
+                                   "median_a_minus_b", "a_better", "b_better", "p_holm"]), ""]
     if res_agg:
         parts += ["## Resources (whole process tree; successful runs only)\n",
                   markdown([r for r in res_agg if r["n_runs"]],
@@ -333,4 +442,4 @@ def score(cases_root, out, datasets=None, workers=1):
     print(text)
     print(f"tables -> {tables}")
     return {"landmarks": lm, "cells": ce, "resources": res, "landmarks_agg": lm_agg,
-            "cells_agg": ce_agg, "resources_agg": res_agg}
+            "cells_agg": ce_agg, "resources_agg": res_agg, "pairwise": pairs}

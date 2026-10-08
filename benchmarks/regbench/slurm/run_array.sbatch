@@ -10,9 +10,11 @@ args=(run --cases "$REGBENCH_CASES" --out "$REGBENCH_OUT" --dataset "$DATASET" -
       --workers "$SLURM_CPUS_PER_TASK" --work "$work")
 # CASE_ID addresses one named case (submit_scale.sh); otherwise the array index picks it.
 if [ -n "${CASE_ID:-}" ]; then args+=(--case-id "$CASE_ID"); else args+=(--index "$SLURM_ARRAY_TASK_ID"); fi
-label="$(_regbench_var LABEL "$METHOD")"
+# ARM_LABEL / ARM_OPTS (submit.sh --arm, submit_calibrate.sh) take the place of the
+# per-method REGBENCH_LABEL_<M> / REGBENCH_OPTS_<M>.
+label="${ARM_LABEL:-$(_regbench_var LABEL "$METHOD")}"
 [ -n "$label" ] && args+=(--label "$label")
-for o in $(_regbench_var OPTS "$METHOD"); do args+=(--opt "$o"); done
+for o in ${ARM_OPTS-$(_regbench_var OPTS "$METHOD")}; do args+=(--opt "$o"); done
 regbench_py "$METHOD" "${args[@]}"
 rm -rf "$work"
 # A failed registration is recorded in run.json and scored at the initial pose, so the

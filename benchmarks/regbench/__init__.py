@@ -1,4 +1,5 @@
-"""Multi-method registration benchmark: synthetic, ANHIR and multiplex-IF cases, one contract."""
+"""Multi-method registration benchmark: synthetic, real-image, ANHIR, HyReCo and multiplex-IF
+cases under one contract."""
 
-DATASETS = ("synthetic", "anhir", "multiplex")
+DATASETS = ("synthetic", "semisynth", "anhir", "hyreco", "multiplex")
 METHODS = ("initial", "stare", "valis", "deeperhistreg")
